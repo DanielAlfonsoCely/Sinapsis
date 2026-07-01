@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+/*
+  SINAPSIS design system — tokens extraídos del Figma.
+  Tailwind v4: el theme se define aquí con @theme (no hay tailwind.config.js).
+  Uso: bg-navy, text-slate, border-line, etc.
+*/
+@theme {
+  /* Tipografía */
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sora), var(--font-dm-sans), sans-serif;
+
+  /* Marca / superficies */
+  --color-navy: #001530; /* primario: títulos, botones */
+  --color-navy-800: #001a42; /* texto fuerte */
+  --color-teal: #286580; /* enlaces / acento */
+  --color-teal-700: #1f4d61;
+
+  /* Texto */
+  --color-ink: #001530;
+  --color-slate: #43474f; /* cuerpo */
+  --color-muted: #747780; /* placeholder */
+  --color-label: #a9b9c5; /* labels en mayúscula */
+
+  /* Líneas y fondos */
+  --color-line: #c3c6d0; /* bordes */
+  --color-field: #f1f3ff; /* fondo de inputs */
+  --color-surface: #ffffff; /* tarjetas */
+  --color-shell: #faf9ff; /* header / barras */
+  --color-canvas: #f7fafb; /* fondo de página */
+
+  /* Estados */
+  --color-success: #1f9d6b;
+  --color-warning: #d98a00;
+  --color-danger: #c0362c;
+  --color-info: #286580;
+
+  /* Decorativos (blur del login) */
+  --color-glow-1: #a6dffe;
+  --color-glow-2: #aac8fc;
+
+  --radius: 0.5rem;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-slate);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
