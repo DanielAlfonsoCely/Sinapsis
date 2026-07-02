@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 AGENTS.md
+.env
 
 # Editor directories and files
 .claude/*
