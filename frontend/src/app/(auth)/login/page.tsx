@@ -2,27 +2,56 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ArrowRight, ChevronDown, Lock, User } from "lucide-react";
+import { ArrowRight, Lock, User } from "lucide-react";
 import { BrandMark } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
 
-const ROLES = [
-  { value: "medico", label: "Médico / Profesional de salud" },
-  { value: "paciente", label: "Paciente" },
-  { value: "admin_entidad", label: "Administrador de entidad" },
-  { value: "admin_plataforma", label: "Administrador de plataforma" },
-];
-
 export default function LoginPage() {
   const router = useRouter();
-  const [role, setRole] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Flujo: tras validar credenciales se exige verificación MFA.
-    router.push("/mfa");
+    setError("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("http://localhost:8080/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, contrasena: password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Credenciales incorrectas");
+        return;
+      }
+
+      localStorage.setItem("token", data.token);
+      document.cookie = `token=${data.token}; path=/; max-age=86400`;
+      localStorage.setItem("usuario", JSON.stringify(data.usuario));
+
+      const tipo = data.usuario.tipo_usuario;
+
+      if (tipo === "medico") {
+        router.push("/dashboard");
+      } else if (tipo === "admin_entidad" || tipo === "admin_plataforma") {
+        setError("El panel de administración estará disponible próximamente.");
+      } else {
+        setError("Rol no soportado en esta versión de la plataforma.");
+      }
+    } catch {
+      setError("Error de conexión con el servidor");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -49,34 +78,15 @@ export default function LoginPage() {
         </div>
 
         <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-          <Field label="Rol de acceso" htmlFor="role">
-            <div className="relative w-full">
-              <select
-                id="role"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="h-11 w-full appearance-none rounded-[var(--radius)] border border-line bg-field px-4 pr-10 text-base text-navy-800 outline-none transition-colors focus:border-teal focus:bg-white focus:ring-2 focus:ring-teal/20"
-              >
-                <option value="" disabled>
-                  Seleccione su rol
-                </option>
-                {ROLES.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 size-5 -translate-y-1/2 text-muted" />
-            </div>
-          </Field>
-
           <Field label="Correo institucional o cédula" htmlFor="user">
             <Input
               id="user"
-              type="text"
+              type="email"
               placeholder="ej: j.perez@clinica.com"
               icon={<User className="size-5" />}
               autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
             />
           </Field>
 
@@ -95,12 +105,16 @@ export default function LoginPage() {
               placeholder="••••••••"
               icon={<Lock className="size-5" />}
               autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
             />
           </Field>
 
-          <Button type="submit" size="lg" className="mt-2 w-full">
-            Iniciar Sesión
-            <ArrowRight className="size-5" />
+          {error && <p className="text-sm text-red-500">{error}</p>}
+
+          <Button type="submit" size="lg" className="mt-2 w-full" disabled={loading}>
+            {loading ? "Iniciando sesión..." : "Iniciar Sesión"}
+            {!loading && <ArrowRight className="size-5" />}
           </Button>
         </form>
 
