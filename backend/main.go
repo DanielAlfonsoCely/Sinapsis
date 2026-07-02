@@ -25,15 +25,13 @@ func main() {
 	ctx := context.Background()
 	pool, err := db.Connect(ctx, dsn)
 	if err != nil {
-    	log.Fatalf("database connection failed: %v", err)
-	} else {
-		defer pool.Close()
-		log.Println("database connected successfully")
+		log.Fatalf("database connection failed: %v", err)
 	}
-	_ = pool
+	defer pool.Close()
+	log.Println("database connected successfully")
 
 	r := gin.Default()
-	routes.Setup(r)
+	routes.Setup(r, pool, cfg)
 
 	log.Printf("server starting on :%s", cfg.ServerPort)
 	if err := r.Run(":" + cfg.ServerPort); err != nil {
