@@ -4,16 +4,7 @@ import type { NextRequest } from "next/server";
 export function middleware(request: NextRequest) {
   const token = request.cookies.get("token")?.value;
 
-  const isDashboardRoute = request.nextUrl.pathname.startsWith("/dashboard") ||
-    request.nextUrl.pathname.startsWith("/agenda") ||
-    request.nextUrl.pathname.startsWith("/analisis-ia") ||
-    request.nextUrl.pathname.startsWith("/auditoria") ||
-    request.nextUrl.pathname.startsWith("/consulta") ||
-    request.nextUrl.pathname.startsWith("/formulas") ||
-    request.nextUrl.pathname.startsWith("/historia-clinica") ||
-    request.nextUrl.pathname.startsWith("/pacientes");
-
-  if (isDashboardRoute && !token) {
+  if (!token) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
@@ -30,5 +21,6 @@ export const config = {
     "/formulas/:path*",
     "/historia-clinica/:path*",
     "/pacientes/:path*",
+    "/admin/:path*",
   ],
 };
