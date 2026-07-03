@@ -18,6 +18,7 @@ type PacienteListItem struct {
 	Email             *string    `json:"email"`
 	UltimaConsulta    *time.Time `json:"ultima_consulta"`
 	ProximaCita       *time.Time `json:"proxima_cita"`
+	TieneCitaHoy      bool       `json:"tiene_cita_hoy"` // hay cita 'programada' para hoy -> se puede consultar
 	Estado            bool       `json:"estado"`
 }
 
@@ -34,6 +35,18 @@ type CreatePacienteRequest struct {
 	Email             string  `json:"email" binding:"required,email"`
 	Telefono          *string `json:"telefono"`
 	Direccion         *string `json:"direccion"`
+}
+
+// TransferRequest es el payload para remitir/transferir un paciente a otro médico.
+type TransferRequest struct {
+	MedicoDestinoID string `json:"medico_destino_id" binding:"required,uuid"`
+}
+
+// MedicoListItem es cada médico disponible como destino de una remisión.
+type MedicoListItem struct {
+	ID           uuid.UUID `json:"id"`
+	Nombre       string    `json:"nombre"`
+	Especialidad string    `json:"especialidad"`
 }
 
 // Paciente es el detalle completo, tal como está en la tabla paciente.

@@ -132,9 +132,22 @@ CREATE TABLE historia_clinica (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     paciente_id UUID NOT NULL,
     entidad_id UUID NOT NULL,
+    medico_tratante_id UUID,  -- médico responsable actual del paciente (reasignable por remisión)
     fecha_creacion TIMESTAMP DEFAULT NOW(),
     fecha_actualizacion TIMESTAMP DEFAULT NOW(),
     CONSTRAINT uq_paciente_historia UNIQUE (paciente_id)  -- RN-003: un paciente, una historia
+);
+
+-- Agenda mínima: cita = turno programado de un paciente con un médico.
+-- Se considera "activa en el horario" cuando estado='programada' y es para hoy.
+CREATE TABLE cita (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    paciente_id UUID NOT NULL,
+    medico_id UUID NOT NULL,
+    fecha_hora TIMESTAMP NOT NULL,
+    motivo VARCHAR(255),
+    estado estado_consulta_enum NOT NULL DEFAULT 'programada',
+    fecha_creacion TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE consulta (
@@ -145,10 +158,21 @@ CREATE TABLE consulta (
     tipo_consulta VARCHAR(100),
     motivo_consulta TEXT NOT NULL,
     diagnostico_principal VARCHAR(255),
+    diagnostico_cie10 VARCHAR(10),         -- código CIE-10 del diagnóstico (estándar Colombia)
     hallazgos_clinicos TEXT,
-    anamnesis TEXT,
+    anamnesis TEXT,                        -- enfermedad actual
+    revision_sistemas TEXT,                -- revisión por sistemas
     examen_fisico TEXT,
+    -- Signos vitales (Res. 1995 de 1999)
+    presion_arterial VARCHAR(20),          -- ej: 120/80
+    frecuencia_cardiaca INT,               -- lpm
+    frecuencia_respiratoria INT,           -- rpm
+    temperatura DECIMAL(4,1),              -- °C
+    saturacion_oxigeno INT,                -- %
+    peso_kg DECIMAL(5,2),
+    talla_cm DECIMAL(5,2),
     observaciones_medico TEXT,
+    plan_manejo TEXT,                      -- plan de tratamiento/manejo
     medicamentos_prescritos TEXT,
     procedimientos_indicados TEXT,
     proxima_cita DATE,
@@ -264,6 +288,10 @@ ALTER TABLE administrador_plataforma ADD CONSTRAINT fk_adminplat_rol FOREIGN KEY
 
 ALTER TABLE historia_clinica ADD CONSTRAINT fk_hc_paciente FOREIGN KEY (paciente_id) REFERENCES paciente(id) ON DELETE RESTRICT;
 ALTER TABLE historia_clinica ADD CONSTRAINT fk_hc_entidad FOREIGN KEY (entidad_id) REFERENCES entidad(id) ON DELETE RESTRICT;
+ALTER TABLE historia_clinica ADD CONSTRAINT fk_hc_medico_tratante FOREIGN KEY (medico_tratante_id) REFERENCES medico(id) ON DELETE RESTRICT;
+
+ALTER TABLE cita ADD CONSTRAINT fk_cita_paciente FOREIGN KEY (paciente_id) REFERENCES paciente(id) ON DELETE RESTRICT;
+ALTER TABLE cita ADD CONSTRAINT fk_cita_medico FOREIGN KEY (medico_id) REFERENCES medico(id) ON DELETE RESTRICT;
 
 ALTER TABLE consulta ADD CONSTRAINT fk_consulta_hc FOREIGN KEY (historia_clinica_id) REFERENCES historia_clinica(id) ON DELETE RESTRICT;
 ALTER TABLE consulta ADD CONSTRAINT fk_consulta_paciente FOREIGN KEY (paciente_id) REFERENCES paciente(id) ON DELETE RESTRICT;
@@ -296,6 +324,9 @@ CREATE INDEX idx_paciente_documento ON paciente(numero_documento);
 CREATE INDEX idx_medico_usuario ON medico(usuario_id);
 CREATE INDEX idx_medico_entidad ON medico(entidad_id);
 CREATE INDEX idx_hc_paciente ON historia_clinica(paciente_id);
+CREATE INDEX idx_hc_medico_tratante ON historia_clinica(medico_tratante_id);
+CREATE INDEX idx_cita_paciente ON cita(paciente_id);
+CREATE INDEX idx_cita_medico_fecha ON cita(medico_id, fecha_hora);
 CREATE INDEX idx_consulta_hc ON consulta(historia_clinica_id);
 CREATE INDEX idx_consulta_medico ON consulta(medico_id);
 CREATE INDEX idx_consulta_paciente ON consulta(paciente_id);

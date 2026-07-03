@@ -6,6 +6,8 @@ services:
       POSTGRES_USER: sinapsis
       POSTGRES_PASSWORD: sinapsis123
       POSTGRES_DB: sinapsis
+      TZ: America/Bogota
+      PGTZ: America/Bogota
     ports:
       - "5432:5432"
     volumes:
@@ -32,6 +34,7 @@ services:
       DB_NAME: sinapsis
       JWT_SECRET: changeme_in_production
       SERVER_PORT: "8080"
+      TZ: America/Bogota
     depends_on:
       postgres:
         condition: service_healthy

@@ -5,7 +5,10 @@ import { useEffect, useState } from "react";
 import {
   Search,
   UserPlus,
-  ArrowUpRight,
+  FileText,
+  Stethoscope,
+  CalendarPlus,
+  Send,
   Phone,
   Calendar,
   X,
@@ -47,7 +50,14 @@ type PacienteAPI = {
   email: string | null;
   ultima_consulta: string | null;
   proxima_cita: string | null;
+  tiene_cita_hoy: boolean;
   estado: boolean;
+};
+
+type Medico = {
+  id: string;
+  nombre: string;
+  especialidad: string;
 };
 
 function initials(nombre: string, apellidos: string) {
@@ -78,6 +88,22 @@ export default function PacientesPage() {
   const [copied, setCopied] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
 
+  // Agendar cita
+  const [citaPaciente, setCitaPaciente] = useState<PacienteAPI | null>(null);
+  const [citaFecha, setCitaFecha] = useState("");
+  const [citaMotivo, setCitaMotivo] = useState("");
+  const [citaError, setCitaError] = useState("");
+  const [citaSaving, setCitaSaving] = useState(false);
+
+  // Remitir / transferir
+  const [transferPaciente, setTransferPaciente] = useState<PacienteAPI | null>(
+    null,
+  );
+  const [medicos, setMedicos] = useState<Medico[]>([]);
+  const [medicoDestino, setMedicoDestino] = useState("");
+  const [transferError, setTransferError] = useState("");
+  const [transferSaving, setTransferSaving] = useState(false);
+
   useEffect(() => {
     const timeout = setTimeout(() => {
       fetchPacientes(query);
@@ -86,6 +112,102 @@ export default function PacientesPage() {
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
+
+  function nowLocalForInput() {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+  }
+
+  function openAgendar(p: PacienteAPI) {
+    setCitaPaciente(p);
+    setCitaFecha(nowLocalForInput());
+    setCitaMotivo("");
+    setCitaError("");
+  }
+
+  async function submitAgendar(e: React.FormEvent) {
+    e.preventDefault();
+    if (!citaPaciente) return;
+    setCitaSaving(true);
+    setCitaError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("http://localhost:8080/api/v1/citas", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          paciente_id: citaPaciente.id,
+          fecha_hora: citaFecha,
+          motivo: citaMotivo || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCitaError(data.error ?? "No se pudo agendar la cita");
+        return;
+      }
+      setCitaPaciente(null);
+      fetchPacientes(query);
+    } catch {
+      setCitaError("Error de conexión con el servidor");
+    } finally {
+      setCitaSaving(false);
+    }
+  }
+
+  async function openTransfer(p: PacienteAPI) {
+    setTransferPaciente(p);
+    setMedicoDestino("");
+    setTransferError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("http://localhost:8080/api/v1/medicos", {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMedicos(data.medicos ?? []);
+      }
+    } catch {
+      // el modal mostrará la lista vacía
+    }
+  }
+
+  async function submitTransfer(e: React.FormEvent) {
+    e.preventDefault();
+    if (!transferPaciente || !medicoDestino) return;
+    setTransferSaving(true);
+    setTransferError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `http://localhost:8080/api/v1/pacientes/${transferPaciente.id}/transferir`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ medico_destino_id: medicoDestino }),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTransferError(data.error ?? "No se pudo remitir el paciente");
+        return;
+      }
+      setTransferPaciente(null);
+      fetchPacientes(query);
+    } catch {
+      setTransferError("Error de conexión con el servidor");
+    } finally {
+      setTransferSaving(false);
+    }
+  }
 
   async function fetchPacientes(q: string) {
     setLoading(true);
@@ -238,6 +360,127 @@ export default function PacientesPage() {
             </p>
 
             <Button onClick={() => setCredenciales(null)}>Cerrar</Button>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal: agendar cita */}
+      {citaPaciente && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+          <Card className="flex w-full max-w-md flex-col gap-4 p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg font-semibold text-ink">
+                Agendar cita
+              </h3>
+              <button
+                type="button"
+                onClick={() => setCitaPaciente(null)}
+                className="text-muted hover:text-ink"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <p className="text-sm text-slate">
+              {citaPaciente.nombre_paciente} {citaPaciente.apellidos_paciente}
+            </p>
+            <form onSubmit={submitAgendar} className="flex flex-col gap-4">
+              <Field label="Fecha y hora">
+                <Input
+                  type="datetime-local"
+                  required
+                  value={citaFecha}
+                  onChange={(e) => setCitaFecha(e.target.value)}
+                />
+              </Field>
+              <Field label="Motivo (opcional)">
+                <Input
+                  value={citaMotivo}
+                  onChange={(e) => setCitaMotivo(e.target.value)}
+                  placeholder="Control, primera vez…"
+                />
+              </Field>
+              <p className="text-xs text-muted">
+                Una cita para hoy habilita el botón de Consulta del paciente.
+              </p>
+              {citaError && <p className="text-sm text-danger">{citaError}</p>}
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setCitaPaciente(null)}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={citaSaving}>
+                  {citaSaving ? "Agendando…" : "Agendar cita"}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal: remitir / transferir */}
+      {transferPaciente && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+          <Card className="flex w-full max-w-md flex-col gap-4 p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg font-semibold text-ink">
+                Remitir paciente
+              </h3>
+              <button
+                type="button"
+                onClick={() => setTransferPaciente(null)}
+                className="text-muted hover:text-ink"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <p className="text-sm text-slate">
+              Reasignar a{" "}
+              <span className="font-medium text-ink">
+                {transferPaciente.nombre_paciente}{" "}
+                {transferPaciente.apellidos_paciente}
+              </span>{" "}
+              a otro médico. Dejará de aparecer en tu lista.
+            </p>
+            <form onSubmit={submitTransfer} className="flex flex-col gap-4">
+              <Field label="Médico destino">
+                <select
+                  className={selectClass}
+                  required
+                  value={medicoDestino}
+                  onChange={(e) => setMedicoDestino(e.target.value)}
+                >
+                  <option value="">Seleccione un médico…</option>
+                  {medicos.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.nombre} — {m.especialidad}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {medicos.length <= 1 && (
+                <p className="text-xs text-muted">
+                  No hay otros médicos registrados para remitir todavía.
+                </p>
+              )}
+              {transferError && (
+                <p className="text-sm text-danger">{transferError}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setTransferPaciente(null)}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={transferSaving || !medicoDestino}>
+                  {transferSaving ? "Remitiendo…" : "Remitir paciente"}
+                </Button>
+              </div>
+            </form>
           </Card>
         </div>
       )}
@@ -446,19 +689,54 @@ export default function PacientesPage() {
                   <td className="px-6 py-4 text-slate">
                     {formatDate(p.proxima_cita)}
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Link
-                        href={`/consulta?paciente=${p.id}`}
-                        className="rounded border border-line px-2.5 py-1 text-xs text-slate hover:bg-field"
+                  <td className="px-6 py-4">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {/* Consultar: solo si tiene cita programada para hoy */}
+                      {p.tiene_cita_hoy ? (
+                        <Link
+                          href={`/consulta?paciente=${p.id}`}
+                          className="inline-flex items-center gap-1.5 rounded-[var(--radius)] bg-navy px-3 py-1.5 text-xs font-medium text-white hover:bg-navy-800"
+                        >
+                          <Stethoscope className="size-3.5" />
+                          Consultar
+                        </Link>
+                      ) : (
+                        <span
+                          title="Sin cita programada para hoy. Agenda una cita para poder consultar."
+                          className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-[var(--radius)] border border-line bg-field px-3 py-1.5 text-xs font-medium text-muted"
+                        >
+                          <Stethoscope className="size-3.5" />
+                          Consultar
+                        </span>
+                      )}
+
+                      {/* Agendar cita */}
+                      <button
+                        type="button"
+                        onClick={() => openAgendar(p)}
+                        className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-line px-3 py-1.5 text-xs font-medium text-slate hover:bg-field"
                       >
-                        Consultar
-                      </Link>
+                        <CalendarPlus className="size-3.5" />
+                        Agendar
+                      </button>
+
+                      {/* Remitir a otro médico */}
+                      <button
+                        type="button"
+                        onClick={() => openTransfer(p)}
+                        className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-line px-3 py-1.5 text-xs font-medium text-slate hover:bg-field"
+                      >
+                        <Send className="size-3.5" />
+                        Remitir
+                      </button>
+
+                      {/* Ver historia clínica */}
                       <Link
                         href={`/historia-clinica?paciente=${p.id}`}
-                        className="inline-flex text-teal hover:text-teal-700"
+                        className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-teal/30 px-3 py-1.5 text-xs font-medium text-teal hover:bg-teal/5"
                       >
-                        <ArrowUpRight className="size-[18px]" />
+                        <FileText className="size-3.5" />
+                        Ver HC
                       </Link>
                     </div>
                   </td>

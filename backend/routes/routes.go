@@ -12,12 +12,16 @@ import (
 type Handler struct {
 	auth     *handlers.AuthHandler
 	paciente *handlers.PacienteHandler
+	consulta *handlers.ConsultaHandler
+	cita     *handlers.CitaHandler
 }
 
 func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 	h := &Handler{
 		auth:     handlers.NewAuthHandler(pool, cfg),
 		paciente: handlers.NewPacienteHandler(pool),
+		consulta: handlers.NewConsultaHandler(pool),
+		cita:     handlers.NewCitaHandler(pool),
 	}
 
 	r.GET("/health", func(c *gin.Context) {
@@ -34,10 +38,24 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 
 		pacientes := api.Group("/pacientes")
 		{
-			pacientes.GET("", h.paciente.List)
+			pacientes.GET("", middleware.RequireAuth(cfg), h.paciente.List)
 			pacientes.GET("/me", middleware.RequireAuth(cfg), h.paciente.Me)
 			pacientes.GET("/:id", h.paciente.GetByID)
+			pacientes.GET("/:id/consultas", h.consulta.ListByPaciente)
 			pacientes.POST("", middleware.RequireAuth(cfg), h.paciente.Create)
+			pacientes.POST("/:id/transferir", middleware.RequireAuth(cfg), h.paciente.Transfer)
+		}
+
+		api.GET("/medicos", middleware.RequireAuth(cfg), h.paciente.ListMedicos)
+
+		consultas := api.Group("/consultas")
+		{
+			consultas.POST("", middleware.RequireAuth(cfg), h.consulta.Create)
+		}
+
+		citas := api.Group("/citas")
+		{
+			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
 		}
 	}
 }

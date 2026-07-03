@@ -6,24 +6,22 @@ import {
   LayoutDashboard,
   Users,
   CalendarDays,
-  Stethoscope,
   Pill,
   BrainCircuit,
-  FileText,
   ShieldCheck,
   LogOut,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand";
 import { cn } from "@/lib/utils";
 
+// Nota: "Nueva Consulta" e "Historia Clínica" no van en el menú porque dependen
+// del paciente seleccionado. Se acceden desde la columna "Acción" de /pacientes.
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/pacientes", label: "Pacientes", icon: Users },
   { href: "/agenda", label: "Agenda", icon: CalendarDays },
-  { href: "/consulta", label: "Nueva Consulta", icon: Stethoscope },
   { href: "/formulas", label: "Fórmulas Médicas", icon: Pill },
   { href: "/analisis-ia", label: "Análisis IA", icon: BrainCircuit },
-  { href: "/historia-clinica", label: "Historia Clínica", icon: FileText },
   { href: "/auditoria", label: "Auditoría", icon: ShieldCheck },
 ];
 

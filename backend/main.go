@@ -20,7 +20,9 @@ func main() {
 		log.Fatal("JWT_SECRET environment variable is required")
 	}
 
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+	// timezone: todas las sesiones usan hora de Colombia para que "hoy"
+	// (CURRENT_DATE / NOW()) coincida con la agenda y las citas del día.
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&timezone=America/Bogota",
 		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName)
 
 	ctx := context.Background()
