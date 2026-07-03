@@ -8,10 +8,34 @@ import {
   ArrowUpRight,
   Phone,
   Calendar,
+  X,
+  CheckCircle,
+  Copy,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Field, Input } from "@/components/ui/input";
+
+const selectClass =
+  "h-11 w-full rounded-[var(--radius)] border border-line bg-field px-4 text-sm text-navy-800 outline-none transition-colors focus:border-teal focus:bg-white focus:ring-2 focus:ring-teal/20";
+
+const EMPTY_FORM = {
+  numero_documento: "",
+  tipo_documento: "CC",
+  nombre_paciente: "",
+  apellidos_paciente: "",
+  fecha_nacimiento: "",
+  sexo: "",
+  email: "",
+  telefono: "",
+  direccion: "",
+};
+
+type CredencialesGeneradas = {
+  nombre: string;
+  email: string;
+  tempPassword: string;
+};
 
 type PacienteAPI = {
   id: string;
@@ -44,6 +68,15 @@ export default function PacientesPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const [showNew, setShowNew] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [credenciales, setCredenciales] = useState<CredencialesGeneradas | null>(
+    null,
+  );
+  const [copied, setCopied] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -80,6 +113,62 @@ export default function PacientesPage() {
     }
   }
 
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setCreating(true);
+    setCreateError("");
+    try {
+      const token = localStorage.getItem("token");
+      const body: Record<string, string> = {
+        numero_documento: form.numero_documento,
+        tipo_documento: form.tipo_documento,
+        nombre_paciente: form.nombre_paciente,
+        apellidos_paciente: form.apellidos_paciente,
+        fecha_nacimiento: form.fecha_nacimiento,
+        email: form.email,
+      };
+      if (form.sexo) body.sexo = form.sexo;
+      if (form.telefono) body.telefono = form.telefono;
+      if (form.direccion) body.direccion = form.direccion;
+
+      const res = await fetch("http://localhost:8080/api/v1/pacientes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setCreateError(data.error ?? "No se pudo registrar el paciente");
+        return;
+      }
+
+      setForm(EMPTY_FORM);
+      setShowNew(false);
+      setCredenciales({
+        nombre: `${data.nombre_paciente} ${data.apellidos_paciente}`,
+        email: data.email,
+        tempPassword: data.temp_password,
+      });
+      fetchPacientes(query);
+    } catch {
+      setCreateError("Error de conexión con el servidor");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function copyPassword() {
+    if (!credenciales) return;
+    await navigator.clipboard.writeText(credenciales.tempPassword);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
     <div className="flex flex-col gap-6">
       {/* Encabezado */}
@@ -92,11 +181,194 @@ export default function PacientesPage() {
             {pacientes.length} pacientes registrados
           </p>
         </div>
-        <Button size="sm" disabled>
+        <Button size="sm" onClick={() => setShowNew((v) => !v)}>
           <UserPlus className="size-4" />
           Nuevo Paciente
         </Button>
       </div>
+
+      {/* Modal de confirmación con credenciales generadas */}
+      {credenciales && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+          <Card className="flex w-full max-w-md flex-col gap-4 p-6">
+            <div className="flex flex-col items-center gap-2 text-center">
+              <div className="flex size-12 items-center justify-center rounded-full bg-success/10 text-success">
+                <CheckCircle className="size-6" />
+              </div>
+              <h3 className="font-display text-lg font-semibold text-ink">
+                Paciente registrado
+              </h3>
+              <p className="text-sm text-slate">
+                {credenciales.nombre} ya puede iniciar sesión con estas
+                credenciales temporales.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3 rounded-[var(--radius)] border border-line bg-shell p-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.6px] text-label">
+                  Correo
+                </p>
+                <p className="text-sm text-navy-800">{credenciales.email}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.6px] text-label">
+                  Contraseña temporal
+                </p>
+                <div className="mt-1 flex items-center justify-between gap-2 rounded border border-line bg-white px-3 py-2">
+                  <span className="font-mono text-sm text-ink">
+                    {credenciales.tempPassword}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={copyPassword}
+                    className="flex items-center gap-1 text-xs text-teal hover:text-teal-700"
+                  >
+                    <Copy className="size-3.5" />
+                    {copied ? "¡Copiado!" : "Copiar"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-muted">
+              Esto es temporal mientras no haya envío real de correo: en
+              producción, esta contraseña solo llegaría al correo del
+              paciente.
+            </p>
+
+            <Button onClick={() => setCredenciales(null)}>Cerrar</Button>
+          </Card>
+        </div>
+      )}
+
+      {/* Formulario nuevo paciente */}
+      {showNew && (
+        <Card className="flex flex-col gap-4 border-teal/30 bg-teal/5 p-5">
+          <div className="flex items-center justify-between">
+            <h3 className="font-display font-semibold text-ink">
+              Registrar paciente
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowNew(false)}
+              className="text-muted hover:text-ink"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Tipo de documento">
+                <select
+                  className={selectClass}
+                  value={form.tipo_documento}
+                  onChange={(e) =>
+                    setForm({ ...form, tipo_documento: e.target.value })
+                  }
+                >
+                  <option value="CC">Cédula de ciudadanía</option>
+                  <option value="TI">Tarjeta de identidad</option>
+                  <option value="CE">Cédula de extranjería</option>
+                  <option value="PA">Pasaporte</option>
+                  <option value="RC">Registro civil</option>
+                </select>
+              </Field>
+              <Field label="Número de documento">
+                <Input
+                  required
+                  value={form.numero_documento}
+                  onChange={(e) =>
+                    setForm({ ...form, numero_documento: e.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Nombres">
+                <Input
+                  required
+                  value={form.nombre_paciente}
+                  onChange={(e) =>
+                    setForm({ ...form, nombre_paciente: e.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Apellidos">
+                <Input
+                  required
+                  value={form.apellidos_paciente}
+                  onChange={(e) =>
+                    setForm({ ...form, apellidos_paciente: e.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Fecha de nacimiento">
+                <Input
+                  type="date"
+                  required
+                  value={form.fecha_nacimiento}
+                  onChange={(e) =>
+                    setForm({ ...form, fecha_nacimiento: e.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Sexo">
+                <select
+                  className={selectClass}
+                  value={form.sexo}
+                  onChange={(e) => setForm({ ...form, sexo: e.target.value })}
+                >
+                  <option value="">Prefiere no decir</option>
+                  <option value="M">Masculino</option>
+                  <option value="F">Femenino</option>
+                  <option value="O">Otro</option>
+                </select>
+              </Field>
+              <Field label="Correo electrónico" hint={<span className="text-[10px] text-muted">Recibirá su contraseña</span>}>
+                <Input
+                  type="email"
+                  required
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                />
+              </Field>
+              <Field label="Teléfono">
+                <Input
+                  value={form.telefono}
+                  onChange={(e) =>
+                    setForm({ ...form, telefono: e.target.value })
+                  }
+                />
+              </Field>
+            </div>
+            <Field label="Dirección">
+              <Input
+                value={form.direccion}
+                onChange={(e) =>
+                  setForm({ ...form, direccion: e.target.value })
+                }
+              />
+            </Field>
+
+            {createError && (
+              <p className="text-sm text-danger">{createError}</p>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowNew(false)}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={creating}>
+                {creating ? "Registrando…" : "Registrar paciente"}
+              </Button>
+            </div>
+          </form>
+        </Card>
+      )}
 
       {/* Barra de búsqueda */}
       <Card className="flex flex-col gap-4 p-5">

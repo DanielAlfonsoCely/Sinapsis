@@ -42,6 +42,8 @@ export default function LoginPage() {
 
       if (tipo === "medico") {
         router.push("/dashboard");
+      } else if (tipo === "paciente") {
+        router.push("/paciente");
       } else if (tipo === "admin_entidad" || tipo === "admin_plataforma") {
         setError("El panel de administración estará disponible próximamente.");
       } else {

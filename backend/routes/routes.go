@@ -6,6 +6,7 @@ import (
 
 	"sinapsis-backend/config"
 	"sinapsis-backend/handlers"
+	"sinapsis-backend/middleware"
 )
 
 type Handler struct {
@@ -34,7 +35,9 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		pacientes := api.Group("/pacientes")
 		{
 			pacientes.GET("", h.paciente.List)
+			pacientes.GET("/me", middleware.RequireAuth(cfg), h.paciente.Me)
 			pacientes.GET("/:id", h.paciente.GetByID)
+			pacientes.POST("", middleware.RequireAuth(cfg), h.paciente.Create)
 		}
 	}
 }

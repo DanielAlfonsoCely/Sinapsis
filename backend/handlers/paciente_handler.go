@@ -2,14 +2,19 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log"
+	"math/big"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 
 	"sinapsis-backend/models"
 )
@@ -76,6 +81,50 @@ func (h *PacienteHandler) List(c *gin.Context) {
 	})
 }
 
+// Me maneja GET /api/v1/pacientes/me.
+// El propio paciente autenticado consulta sus datos, resolviendo el usuario_id
+// del JWT (a diferencia de GetByID, que recibe el id del paciente por URL).
+func (h *PacienteHandler) Me(c *gin.Context) {
+	userIDRaw, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+	userID, err := uuid.Parse(userIDRaw.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+		return
+	}
+
+	var p models.Paciente
+	err = h.pool.QueryRow(
+		context.Background(),
+		`SELECT id, usuario_id, numero_documento, tipo_documento, nombre_paciente, apellidos_paciente,
+		        fecha_nacimiento, sexo, tipo_sangre, alergias, direccion, telefono, email,
+		        contacto_emergencia, telefono_emergencia, antecedentes_medicos, medicamentos_actuales,
+		        estado_civil, ocupacion, aseguradora, numero_afiliacion, fecha_registro, estado
+		 FROM paciente WHERE usuario_id = $1`,
+		userID,
+	).Scan(
+		&p.ID, &p.UsuarioID, &p.NumeroDocumento, &p.TipoDocumento, &p.NombrePaciente, &p.ApellidosPaciente,
+		&p.FechaNacimiento, &p.Sexo, &p.TipoSangre, &p.Alergias, &p.Direccion, &p.Telefono, &p.Email,
+		&p.ContactoEmergencia, &p.TelefonoEmergencia, &p.AntecedentesMedicos, &p.MedicamentosActuales,
+		&p.EstadoCivil, &p.Ocupacion, &p.Aseguradora, &p.NumeroAfiliacion, &p.FechaRegistro, &p.Estado,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "paciente not found"})
+			return
+		}
+		log.Printf("get me error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch paciente"})
+		return
+	}
+
+	c.JSON(http.StatusOK, p)
+}
+
 // GetByID maneja GET /api/v1/pacientes/:id
 func (h *PacienteHandler) GetByID(c *gin.Context) {
 	idParam := c.Param("id")
@@ -112,4 +161,160 @@ func (h *PacienteHandler) GetByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, p)
+}
+
+const tempPasswordChars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+
+// generateTempPassword genera una contraseña temporal aleatoria y criptográficamente segura.
+func generateTempPassword(length int) (string, error) {
+	result := make([]byte, length)
+	for i := range result {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(tempPasswordChars))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = tempPasswordChars[n.Int64()]
+	}
+	return string(result), nil
+}
+
+// Create maneja POST /api/v1/pacientes (HU-02).
+// Registra en una sola transacción: la cuenta de usuario del paciente (con
+// contraseña temporal generada y "enviada" por correo), el paciente y su
+// historia clínica, vinculada a la entidad del médico autenticado.
+func (h *PacienteHandler) Create(c *gin.Context) {
+	userIDRaw, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+	userID, err := uuid.Parse(userIDRaw.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+		return
+	}
+
+	var req models.CreatePacienteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	fechaNacimiento, err := time.Parse("2006-01-02", req.FechaNacimiento)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "fecha_nacimiento debe tener formato YYYY-MM-DD"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// El médico autenticado determina la entidad dueña de la historia clínica (RN-003).
+	var medicoEntidadID uuid.UUID
+	err = h.pool.QueryRow(ctx,
+		`SELECT entidad_id FROM medico WHERE usuario_id = $1`, userID,
+	).Scan(&medicoEntidadID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede registrar pacientes"})
+			return
+		}
+		log.Printf("lookup medico error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
+		return
+	}
+
+	tempPassword, err := generateTempPassword(12)
+	if err != nil {
+		log.Printf("generate password error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create credentials"})
+		return
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(tempPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process password"})
+		return
+	}
+
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		log.Printf("begin tx error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var usuarioID uuid.UUID
+	err = tx.QueryRow(ctx,
+		`INSERT INTO usuario (nombre_usuario, apellidos, email, contrasena_hash, tipo_usuario, fecha_creacion, fecha_actualizacion)
+		 VALUES ($1, $2, $3, $4, 'paciente', NOW(), NOW())
+		 RETURNING id`,
+		req.NombrePaciente, req.ApellidosPaciente, req.Email, string(hashedPassword),
+	).Scan(&usuarioID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			c.JSON(http.StatusConflict, gin.H{"error": "ya existe un usuario con ese email"})
+			return
+		}
+		log.Printf("create usuario error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create usuario"})
+		return
+	}
+
+	var pacienteID uuid.UUID
+	var fechaRegistro time.Time
+	err = tx.QueryRow(ctx,
+		`INSERT INTO paciente (usuario_id, numero_documento, tipo_documento, nombre_paciente, apellidos_paciente,
+		                       fecha_nacimiento, sexo, telefono, email, direccion, fecha_registro, estado)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), true)
+		 RETURNING id, fecha_registro`,
+		usuarioID, req.NumeroDocumento, req.TipoDocumento, req.NombrePaciente, req.ApellidosPaciente,
+		fechaNacimiento, req.Sexo, req.Telefono, req.Email, req.Direccion,
+	).Scan(&pacienteID, &fechaRegistro)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			c.JSON(http.StatusConflict, gin.H{"error": "ya existe un paciente con ese número de documento"})
+			return
+		}
+		log.Printf("create paciente error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create paciente"})
+		return
+	}
+
+	var historiaClinicaID uuid.UUID
+	err = tx.QueryRow(ctx,
+		`INSERT INTO historia_clinica (paciente_id, entidad_id, fecha_creacion, fecha_actualizacion)
+		 VALUES ($1, $2, NOW(), NOW())
+		 RETURNING id`,
+		pacienteID, medicoEntidadID,
+	).Scan(&historiaClinicaID)
+	if err != nil {
+		log.Printf("create historia_clinica error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create historia clínica"})
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("commit error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save paciente"})
+		return
+	}
+
+	// Envío de correo simulado: aún no hay proveedor SMTP configurado.
+	log.Printf("[EMAIL SIMULADO] Para: %s | Asunto: Bienvenido a SINAPSIS | Contraseña temporal: %s",
+		req.Email, tempPassword)
+
+	c.JSON(http.StatusCreated, gin.H{
+		"id":                 pacienteID,
+		"numero_documento":   req.NumeroDocumento,
+		"nombre_paciente":    req.NombrePaciente,
+		"apellidos_paciente": req.ApellidosPaciente,
+		// temp_password: solo se expone mientras el envío de correo esté simulado.
+		// Quitar este campo en cuanto haya un proveedor SMTP real.
+		"temp_password":       tempPassword,
+		"email":               req.Email,
+		"historia_clinica_id": historiaClinicaID,
+		"fecha_registro":      fechaRegistro,
+	})
 }

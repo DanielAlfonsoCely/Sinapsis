@@ -17,7 +17,9 @@ services:
       retries: 5
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      network: host
     container_name: sinapsis_backend
     ports:
       - "8080:8080"
@@ -34,7 +36,9 @@ services:
         condition: service_healthy
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      network: host
     container_name: sinapsis_frontend
     ports:
       - "3000:3000"
