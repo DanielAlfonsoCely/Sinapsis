@@ -10,6 +10,7 @@ type Config struct {
 	DBName     string
 	JWTSecret  string
 	ServerPort string
+	UploadsDir string
 }
 
 func Load() *Config {
@@ -21,6 +22,7 @@ func Load() *Config {
 		DBName:     getEnv("DB_NAME", ""),
 		JWTSecret:  getEnv("JWT_SECRET", ""),
 		ServerPort: getEnv("SERVER_PORT", "8080"),
+		UploadsDir: getEnv("UPLOADS_DIR", "/app/uploads"),
 	}
 }
 

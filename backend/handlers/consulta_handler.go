@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -78,6 +79,25 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Gate: solo se puede consultar a un paciente con cita activa (programada) para
+	// hoy con este médico. Se valida en el backend para que no se pueda saltar por
+	// URL ni desde la HC (RN: no hay consulta sin cita).
+	var tieneCitaHoy bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM cita
+		   WHERE paciente_id = $1 AND medico_id = $2
+		     AND estado = 'programada' AND fecha_hora::date = CURRENT_DATE)`,
+		pacienteID, medicoID,
+	).Scan(&tieneCitaHoy); err != nil {
+		log.Printf("check cita hoy error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify cita"})
+		return
+	}
+	if !tieneCitaHoy {
+		c.JSON(http.StatusForbidden, gin.H{"error": "el paciente no tiene una cita activa para hoy"})
+		return
+	}
+
 	// La historia clínica del paciente ya debe existir (HU-02).
 	var historiaClinicaID uuid.UUID
 	err = h.pool.QueryRow(ctx,
@@ -93,9 +113,17 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 		return
 	}
 
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		log.Printf("begin tx error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer tx.Rollback(ctx)
+
 	var consultaID uuid.UUID
 	var fechaConsulta time.Time
-	err = h.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`INSERT INTO consulta (
 			historia_clinica_id, paciente_id, medico_id,
 			tipo_consulta, motivo_consulta, anamnesis, revision_sistemas,
@@ -130,15 +158,48 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Fórmula médica emitida durante la consulta (HU-06), si el médico recetó.
+	var formulaID *uuid.UUID
+	if len(req.Medicamentos) > 0 {
+		medicamentosJSON, err := json.Marshal(req.Medicamentos)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode medicamentos"})
+			return
+		}
+		var fid uuid.UUID
+		err = tx.QueryRow(ctx,
+			`INSERT INTO formula_medica
+			   (historia_clinica_id, paciente_id, medico_id, consulta_id, medicamentos,
+			    indicaciones, estado_formula)
+			 VALUES ($1, $2, $3, $4, $5, $6, 'vigente')
+			 RETURNING id`,
+			historiaClinicaID, pacienteID, medicoID, consultaID, medicamentosJSON,
+			req.FormulaIndicaciones,
+		).Scan(&fid)
+		if err != nil {
+			log.Printf("create formula error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create fórmula"})
+			return
+		}
+		formulaID = &fid
+	}
+
 	// La consulta atiende la cita programada de hoy: se marca como completada.
-	if _, err := h.pool.Exec(ctx,
+	if _, err := tx.Exec(ctx,
 		`UPDATE cita SET estado = 'completada'
 		  WHERE paciente_id = $1 AND medico_id = $2
 		    AND estado = 'programada' AND fecha_hora::date = CURRENT_DATE`,
 		pacienteID, medicoID,
 	); err != nil {
-		// No es crítico para la consulta ya registrada; solo se registra el error.
 		log.Printf("marcar cita completada error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update cita"})
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("commit consulta error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save consulta"})
+		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -146,6 +207,7 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 		"historia_clinica_id": historiaClinicaID,
 		"paciente_id":         pacienteID,
 		"fecha_consulta":      fechaConsulta,
+		"formula_id":          formulaID,
 	})
 }
 
@@ -168,7 +230,12 @@ func (h *ConsultaHandler) ListByPaciente(c *gin.Context) {
 		        c.diagnostico_principal, c.diagnostico_cie10, c.plan_manejo,
 		        c.procedimientos_indicados, c.observaciones_medico,
 		        c.proxima_cita, c.fecha_consulta, c.estado_consulta,
-		        u.nombre_usuario, u.apellidos, m.especialidad
+		        u.nombre_usuario, u.apellidos, m.especialidad,
+		        COALESCE((
+		          SELECT json_agg(json_build_object('id', e.id, 'nombre', e.descripcion, 'tipo', e.tipo_examen)
+		                          ORDER BY e.fecha_carga)
+		          FROM examinagen e WHERE e.consulta_id = c.id
+		        ), '[]') AS anexos
 		 FROM consulta c
 		 JOIN medico m ON m.id = c.medico_id
 		 JOIN usuario u ON u.id = m.usuario_id
@@ -187,6 +254,7 @@ func (h *ConsultaHandler) ListByPaciente(c *gin.Context) {
 	for rows.Next() {
 		var item models.ConsultaListItem
 		var nombre, apellidos string
+		var anexosJSON []byte
 		if err := rows.Scan(
 			&item.ID, &item.TipoConsulta, &item.MotivoConsulta, &item.Anamnesis, &item.RevisionSistemas,
 			&item.ExamenFisico, &item.HallazgosClinicos,
@@ -195,13 +263,16 @@ func (h *ConsultaHandler) ListByPaciente(c *gin.Context) {
 			&item.DiagnosticoPrincipal, &item.DiagnosticoCIE10, &item.PlanManejo,
 			&item.ProcedimientosIndicados, &item.ObservacionesMedico,
 			&item.ProximaCita, &item.FechaConsulta, &item.EstadoConsulta,
-			&nombre, &apellidos, &item.MedicoEspecialidad,
+			&nombre, &apellidos, &item.MedicoEspecialidad, &anexosJSON,
 		); err != nil {
 			log.Printf("scan consulta error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read consultas"})
 			return
 		}
 		item.MedicoNombre = nombre + " " + apellidos
+		if err := json.Unmarshal(anexosJSON, &item.Anexos); err != nil {
+			item.Anexos = []models.AnexoItem{}
+		}
 		consultas = append(consultas, item)
 	}
 

@@ -59,6 +59,8 @@ func (h *PacienteHandler) List(c *gin.Context) {
 		return
 	}
 
+	// Un médico ve: sus pacientes propios (es tratante) y los temporales que le
+	// agendaron cita (como especialista, vía remisión).
 	rows, err := h.pool.Query(
 		context.Background(),
 		`SELECT p.id, p.numero_documento, p.tipo_documento, p.nombre_paciente, p.apellidos_paciente,
@@ -67,17 +69,19 @@ func (h *PacienteHandler) List(c *gin.Context) {
 		        (SELECT MIN(co.proxima_cita) FROM consulta co
 		           WHERE co.paciente_id = p.id AND co.proxima_cita >= CURRENT_DATE) AS proxima_cita,
 		        EXISTS (SELECT 1 FROM cita ci
-		           WHERE ci.paciente_id = p.id AND ci.estado = 'programada'
+		           WHERE ci.paciente_id = p.id AND ci.medico_id = $1 AND ci.estado = 'programada'
 		             AND ci.fecha_hora::date = CURRENT_DATE) AS tiene_cita_hoy,
+		        (hc.medico_tratante_id = $1) AS es_tratante,
 		        p.estado
 		 FROM paciente p
 		 JOIN historia_clinica hc ON hc.paciente_id = p.id
-		 WHERE hc.medico_tratante_id = $1
+		 WHERE (hc.medico_tratante_id = $1
+		        OR EXISTS (SELECT 1 FROM cita ci2 WHERE ci2.paciente_id = p.id AND ci2.medico_id = $1))
 		   AND ($2 = ''
 		    OR p.nombre_paciente ILIKE '%' || $2 || '%'
 		    OR p.apellidos_paciente ILIKE '%' || $2 || '%'
 		    OR p.numero_documento ILIKE '%' || $2 || '%')
-		 ORDER BY p.nombre_paciente, p.apellidos_paciente`,
+		 ORDER BY es_tratante DESC, p.nombre_paciente, p.apellidos_paciente`,
 		medicoID, q,
 	)
 	if err != nil {
@@ -92,7 +96,7 @@ func (h *PacienteHandler) List(c *gin.Context) {
 		var p models.PacienteListItem
 		if err := rows.Scan(
 			&p.ID, &p.NumeroDocumento, &p.TipoDocumento, &p.NombrePaciente, &p.ApellidosPaciente,
-			&p.Telefono, &p.Email, &p.UltimaConsulta, &p.ProximaCita, &p.TieneCitaHoy, &p.Estado,
+			&p.Telefono, &p.Email, &p.UltimaConsulta, &p.ProximaCita, &p.TieneCitaHoy, &p.EsTratante, &p.Estado,
 		); err != nil {
 			log.Printf("scan paciente error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read pacientes"})
@@ -158,7 +162,10 @@ func (h *PacienteHandler) Me(c *gin.Context) {
 	c.JSON(http.StatusOK, p)
 }
 
-// GetByID maneja GET /api/v1/pacientes/:id
+// GetByID maneja GET /api/v1/pacientes/:id (autenticado).
+// tiene_cita_hoy es específico del médico autenticado: indica si ESE médico tiene
+// una cita programada para hoy con el paciente (gate de consulta para tratante y
+// especialista por igual).
 func (h *PacienteHandler) GetByID(c *gin.Context) {
 	idParam := c.Param("id")
 	id, err := uuid.Parse(idParam)
@@ -167,20 +174,35 @@ func (h *PacienteHandler) GetByID(c *gin.Context) {
 		return
 	}
 
+	// Médico autenticado (si lo es); si no, tiene_cita_hoy quedará en false.
+	var medicoID uuid.UUID
+	if userIDRaw, ok := c.Get("user_id"); ok {
+		if userID, err := uuid.Parse(userIDRaw.(string)); err == nil {
+			_ = h.pool.QueryRow(context.Background(),
+				`SELECT id FROM medico WHERE usuario_id = $1`, userID,
+			).Scan(&medicoID)
+		}
+	}
+
 	var p models.Paciente
 	err = h.pool.QueryRow(
 		context.Background(),
 		`SELECT id, usuario_id, numero_documento, tipo_documento, nombre_paciente, apellidos_paciente,
 		        fecha_nacimiento, sexo, tipo_sangre, alergias, direccion, telefono, email,
 		        contacto_emergencia, telefono_emergencia, antecedentes_medicos, medicamentos_actuales,
-		        estado_civil, ocupacion, aseguradora, numero_afiliacion, fecha_registro, estado
+		        estado_civil, ocupacion, aseguradora, numero_afiliacion, fecha_registro, estado,
+		        EXISTS (SELECT 1 FROM cita ci
+		           WHERE ci.paciente_id = paciente.id AND ci.medico_id = $2
+		             AND ci.estado = 'programada'
+		             AND ci.fecha_hora::date = CURRENT_DATE) AS tiene_cita_hoy
 		 FROM paciente WHERE id = $1`,
-		id,
+		id, medicoID,
 	).Scan(
 		&p.ID, &p.UsuarioID, &p.NumeroDocumento, &p.TipoDocumento, &p.NombrePaciente, &p.ApellidosPaciente,
 		&p.FechaNacimiento, &p.Sexo, &p.TipoSangre, &p.Alergias, &p.Direccion, &p.Telefono, &p.Email,
 		&p.ContactoEmergencia, &p.TelefonoEmergencia, &p.AntecedentesMedicos, &p.MedicamentosActuales,
 		&p.EstadoCivil, &p.Ocupacion, &p.Aseguradora, &p.NumeroAfiliacion, &p.FechaRegistro, &p.Estado,
+		&p.TieneCitaHoy,
 	)
 
 	if err != nil {
@@ -196,43 +218,39 @@ func (h *PacienteHandler) GetByID(c *gin.Context) {
 	c.JSON(http.StatusOK, p)
 }
 
-// ListMedicos maneja GET /api/v1/medicos.
-// Devuelve los médicos disponibles como destino de una remisión/transferencia.
-func (h *PacienteHandler) ListMedicos(c *gin.Context) {
+// ListEspecialidades maneja GET /api/v1/especialidades.
+// Devuelve las especialidades disponibles (excluye Medicina General) para que el
+// médico general elija qué autorizar a su paciente.
+func (h *PacienteHandler) ListEspecialidades(c *gin.Context) {
 	rows, err := h.pool.Query(context.Background(),
-		`SELECT m.id, u.nombre_usuario, u.apellidos, m.especialidad
-		 FROM medico m
-		 JOIN usuario u ON u.id = m.usuario_id
-		 WHERE m.estado = true
-		 ORDER BY u.nombre_usuario, u.apellidos`,
+		`SELECT DISTINCT especialidad FROM medico
+		 WHERE estado = true AND especialidad NOT ILIKE 'Medicina General'
+		 ORDER BY especialidad`,
 	)
 	if err != nil {
-		log.Printf("list medicos error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch médicos"})
+		log.Printf("list especialidades error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch especialidades"})
 		return
 	}
 	defer rows.Close()
 
-	medicos := make([]models.MedicoListItem, 0)
+	especialidades := make([]string, 0)
 	for rows.Next() {
-		var m models.MedicoListItem
-		var nombre, apellidos string
-		if err := rows.Scan(&m.ID, &nombre, &apellidos, &m.Especialidad); err != nil {
-			log.Printf("scan medico error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read médicos"})
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read especialidades"})
 			return
 		}
-		m.Nombre = nombre + " " + apellidos
-		medicos = append(medicos, m)
+		especialidades = append(especialidades, e)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"medicos": medicos})
+	c.JSON(http.StatusOK, gin.H{"especialidades": especialidades})
 }
 
-// Transfer maneja POST /api/v1/pacientes/:id/transferir.
-// Reasigna el médico tratante del paciente. Solo el médico tratante actual puede
-// remitir a su paciente; tras la transferencia deja de verlo y el destino lo ve.
-func (h *PacienteHandler) Transfer(c *gin.Context) {
+// AutorizarEspecialidad maneja POST /api/v1/pacientes/:id/remisiones.
+// El médico tratante (general) autoriza a su paciente a consultar una especialidad.
+// NO cambia el médico tratante: el especialista atenderá al paciente temporalmente.
+func (h *PacienteHandler) AutorizarEspecialidad(c *gin.Context) {
 	userIDRaw, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
@@ -250,25 +268,20 @@ func (h *PacienteHandler) Transfer(c *gin.Context) {
 		return
 	}
 
-	var req models.TransferRequest
+	var req models.AutorizarEspecialidadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	medicoDestinoID, err := uuid.Parse(req.MedicoDestinoID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "medico_destino_id inválido"})
 		return
 	}
 
 	ctx := context.Background()
 
-	// Médico que solicita la transferencia.
-	var medicoOrigenID uuid.UUID
-	err = h.pool.QueryRow(ctx, `SELECT id FROM medico WHERE usuario_id = $1`, userID).Scan(&medicoOrigenID)
+	// Solo el médico tratante del paciente puede autorizar.
+	var medicoID uuid.UUID
+	err = h.pool.QueryRow(ctx, `SELECT id FROM medico WHERE usuario_id = $1`, userID).Scan(&medicoID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede remitir pacientes"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede autorizar"})
 			return
 		}
 		log.Printf("lookup medico error: %v", err)
@@ -276,43 +289,199 @@ func (h *PacienteHandler) Transfer(c *gin.Context) {
 		return
 	}
 
-	if medicoOrigenID == medicoDestinoID {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "el paciente ya está asignado a ese médico"})
-		return
-	}
-
-	// El destino debe existir y estar activo.
-	var exists2 bool
+	var esTratante bool
 	if err := h.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM medico WHERE id = $1 AND estado = true)`, medicoDestinoID,
-	).Scan(&exists2); err != nil {
-		log.Printf("check destino error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico destino"})
+		`SELECT EXISTS(SELECT 1 FROM historia_clinica
+		   WHERE paciente_id = $1 AND medico_tratante_id = $2)`,
+		pacienteID, medicoID,
+	).Scan(&esTratante); err != nil {
+		log.Printf("check tratante error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify paciente"})
 		return
 	}
-	if !exists2 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "el médico destino no existe"})
-		return
-	}
-
-	// Solo el médico tratante actual puede transferir a su paciente.
-	tag, err := h.pool.Exec(ctx,
-		`UPDATE historia_clinica
-		    SET medico_tratante_id = $1, fecha_actualizacion = NOW()
-		  WHERE paciente_id = $2 AND medico_tratante_id = $3`,
-		medicoDestinoID, pacienteID, medicoOrigenID,
-	)
-	if err != nil {
-		log.Printf("transfer error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to transfer paciente"})
-		return
-	}
-	if tag.RowsAffected() == 0 {
+	if !esTratante {
 		c.JSON(http.StatusForbidden, gin.H{"error": "el paciente no está bajo su cuidado"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "transferido", "medico_destino_id": medicoDestinoID})
+	// Debe existir al menos un especialista de esa especialidad.
+	var hayEspecialista bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM medico WHERE estado = true AND especialidad = $1)`,
+		req.Especialidad,
+	).Scan(&hayEspecialista); err != nil {
+		log.Printf("check especialidad error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify especialidad"})
+		return
+	}
+	if !hayEspecialista {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no hay especialistas de esa especialidad"})
+		return
+	}
+
+	var remisionID uuid.UUID
+	err = h.pool.QueryRow(ctx,
+		`INSERT INTO remision (paciente_id, medico_remitente_id, especialidad, motivo, estado)
+		 VALUES ($1, $2, $3, $4, 'autorizada')
+		 RETURNING id`,
+		pacienteID, medicoID, req.Especialidad, req.Motivo,
+	).Scan(&remisionID)
+	if err != nil {
+		log.Printf("create remision error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create remisión"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"id":           remisionID,
+		"especialidad": req.Especialidad,
+	})
+}
+
+// MiAgenda maneja GET /api/v1/mi/agenda (para el paciente autenticado).
+// Devuelve su médico tratante, las especialidades autorizadas con sus especialistas,
+// y sus próximas citas.
+func (h *PacienteHandler) MiAgenda(c *gin.Context) {
+	userIDRaw, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+	userID, err := uuid.Parse(userIDRaw.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+		return
+	}
+
+	ctx := context.Background()
+
+	var pacienteID uuid.UUID
+	var tratanteID *uuid.UUID
+	err = h.pool.QueryRow(ctx,
+		`SELECT p.id, hc.medico_tratante_id
+		 FROM paciente p JOIN historia_clinica hc ON hc.paciente_id = p.id
+		 WHERE p.usuario_id = $1`, userID,
+	).Scan(&pacienteID, &tratanteID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "solo un paciente puede ver su agenda"})
+			return
+		}
+		log.Printf("lookup paciente error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch agenda"})
+		return
+	}
+
+	// Médico tratante (general).
+	var tratante *models.MedicoListItem
+	if tratanteID != nil {
+		var m models.MedicoListItem
+		var nombre, apellidos string
+		if err := h.pool.QueryRow(ctx,
+			`SELECT m.id, u.nombre_usuario, u.apellidos, m.especialidad
+			 FROM medico m JOIN usuario u ON u.id = m.usuario_id WHERE m.id = $1`,
+			*tratanteID,
+		).Scan(&m.ID, &nombre, &apellidos, &m.Especialidad); err == nil {
+			m.Nombre = nombre + " " + apellidos
+			tratante = &m
+		}
+	}
+
+	// Especialidades autorizadas + especialistas de cada una.
+	remRows, err := h.pool.Query(ctx,
+		`SELECT DISTINCT especialidad FROM remision
+		 WHERE paciente_id = $1 AND estado = 'autorizada' ORDER BY especialidad`,
+		pacienteID,
+	)
+	if err != nil {
+		log.Printf("list remisiones error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch remisiones"})
+		return
+	}
+	type autorizacion struct {
+		Especialidad string                   `json:"especialidad"`
+		Especialistas []models.MedicoListItem `json:"especialistas"`
+	}
+	autorizaciones := make([]autorizacion, 0)
+	var especialidades []string
+	for remRows.Next() {
+		var e string
+		if err := remRows.Scan(&e); err != nil {
+			remRows.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read remisiones"})
+			return
+		}
+		especialidades = append(especialidades, e)
+	}
+	remRows.Close()
+
+	for _, e := range especialidades {
+		espRows, err := h.pool.Query(ctx,
+			`SELECT m.id, u.nombre_usuario, u.apellidos, m.especialidad
+			 FROM medico m JOIN usuario u ON u.id = m.usuario_id
+			 WHERE m.estado = true AND m.especialidad = $1
+			 ORDER BY u.nombre_usuario`, e,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch especialistas"})
+			return
+		}
+		especialistas := make([]models.MedicoListItem, 0)
+		for espRows.Next() {
+			var m models.MedicoListItem
+			var nombre, apellidos string
+			if err := espRows.Scan(&m.ID, &nombre, &apellidos, &m.Especialidad); err != nil {
+				espRows.Close()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read especialistas"})
+				return
+			}
+			m.Nombre = nombre + " " + apellidos
+			especialistas = append(especialistas, m)
+		}
+		espRows.Close()
+		autorizaciones = append(autorizaciones, autorizacion{Especialidad: e, Especialistas: especialistas})
+	}
+
+	// Próximas citas del paciente.
+	citaRows, err := h.pool.Query(ctx,
+		`SELECT ci.id, u.nombre_usuario, u.apellidos, m.especialidad, ci.fecha_hora, ci.motivo, ci.estado
+		 FROM cita ci
+		 JOIN medico m ON m.id = ci.medico_id
+		 JOIN usuario u ON u.id = m.usuario_id
+		 WHERE ci.paciente_id = $1
+		 ORDER BY ci.fecha_hora DESC`, pacienteID,
+	)
+	if err != nil {
+		log.Printf("list citas error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch citas"})
+		return
+	}
+	defer citaRows.Close()
+	citas := make([]gin.H, 0)
+	for citaRows.Next() {
+		var id uuid.UUID
+		var nombre, apellidos, especialidad, estado string
+		var fechaHora time.Time
+		var motivo *string
+		if err := citaRows.Scan(&id, &nombre, &apellidos, &especialidad, &fechaHora, &motivo, &estado); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read citas"})
+			return
+		}
+		citas = append(citas, gin.H{
+			"id":            id,
+			"medico_nombre": nombre + " " + apellidos,
+			"especialidad":  especialidad,
+			"fecha_hora":    fechaHora,
+			"motivo":        motivo,
+			"estado":        estado,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"medico_tratante": tratante,
+		"autorizaciones":  autorizaciones,
+		"citas":           citas,
+	})
 }
 
 const tempPasswordChars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"

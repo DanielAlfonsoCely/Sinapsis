@@ -7,8 +7,8 @@ import {
   UserPlus,
   FileText,
   Stethoscope,
-  CalendarPlus,
-  Send,
+  ShieldCheck,
+  Pill,
   Phone,
   Calendar,
   X,
@@ -51,13 +51,8 @@ type PacienteAPI = {
   ultima_consulta: string | null;
   proxima_cita: string | null;
   tiene_cita_hoy: boolean;
+  es_tratante: boolean;
   estado: boolean;
-};
-
-type Medico = {
-  id: string;
-  nombre: string;
-  especialidad: string;
 };
 
 function initials(nombre: string, apellidos: string) {
@@ -88,21 +83,14 @@ export default function PacientesPage() {
   const [copied, setCopied] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
 
-  // Agendar cita
-  const [citaPaciente, setCitaPaciente] = useState<PacienteAPI | null>(null);
-  const [citaFecha, setCitaFecha] = useState("");
-  const [citaMotivo, setCitaMotivo] = useState("");
-  const [citaError, setCitaError] = useState("");
-  const [citaSaving, setCitaSaving] = useState(false);
-
-  // Remitir / transferir
-  const [transferPaciente, setTransferPaciente] = useState<PacienteAPI | null>(
-    null,
-  );
-  const [medicos, setMedicos] = useState<Medico[]>([]);
-  const [medicoDestino, setMedicoDestino] = useState("");
-  const [transferError, setTransferError] = useState("");
-  const [transferSaving, setTransferSaving] = useState(false);
+  // Autorizar especialidad (remisión)
+  const [autPaciente, setAutPaciente] = useState<PacienteAPI | null>(null);
+  const [especialidades, setEspecialidades] = useState<string[]>([]);
+  const [especialidadSel, setEspecialidadSel] = useState("");
+  const [autMotivo, setAutMotivo] = useState("");
+  const [autError, setAutError] = useState("");
+  const [autOk, setAutOk] = useState("");
+  const [autSaving, setAutSaving] = useState(false);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -113,99 +101,57 @@ export default function PacientesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
-  function nowLocalForInput() {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
-  }
-
-  function openAgendar(p: PacienteAPI) {
-    setCitaPaciente(p);
-    setCitaFecha(nowLocalForInput());
-    setCitaMotivo("");
-    setCitaError("");
-  }
-
-  async function submitAgendar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!citaPaciente) return;
-    setCitaSaving(true);
-    setCitaError("");
+  async function openAutorizar(p: PacienteAPI) {
+    setAutPaciente(p);
+    setEspecialidadSel("");
+    setAutMotivo("");
+    setAutError("");
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://localhost:8080/api/v1/citas", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          paciente_id: citaPaciente.id,
-          fecha_hora: citaFecha,
-          motivo: citaMotivo || undefined,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setCitaError(data.error ?? "No se pudo agendar la cita");
-        return;
-      }
-      setCitaPaciente(null);
-      fetchPacientes(query);
-    } catch {
-      setCitaError("Error de conexión con el servidor");
-    } finally {
-      setCitaSaving(false);
-    }
-  }
-
-  async function openTransfer(p: PacienteAPI) {
-    setTransferPaciente(p);
-    setMedicoDestino("");
-    setTransferError("");
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://localhost:8080/api/v1/medicos", {
+      const res = await fetch("http://localhost:8080/api/v1/especialidades", {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
-      if (res.ok) {
-        const data = await res.json();
-        setMedicos(data.medicos ?? []);
-      }
+      if (res.ok) setEspecialidades((await res.json()).especialidades ?? []);
     } catch {
       // el modal mostrará la lista vacía
     }
   }
 
-  async function submitTransfer(e: React.FormEvent) {
+  async function submitAutorizar(e: React.FormEvent) {
     e.preventDefault();
-    if (!transferPaciente || !medicoDestino) return;
-    setTransferSaving(true);
-    setTransferError("");
+    if (!autPaciente || !especialidadSel) return;
+    setAutSaving(true);
+    setAutError("");
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
-        `http://localhost:8080/api/v1/pacientes/${transferPaciente.id}/transferir`,
+        `http://localhost:8080/api/v1/pacientes/${autPaciente.id}/remisiones`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ medico_destino_id: medicoDestino }),
+          body: JSON.stringify({
+            especialidad: especialidadSel,
+            motivo: autMotivo || undefined,
+          }),
         },
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setTransferError(data.error ?? "No se pudo remitir el paciente");
+        setAutError(data.error ?? "No se pudo autorizar la especialidad");
         return;
       }
-      setTransferPaciente(null);
-      fetchPacientes(query);
+      const nombre = `${autPaciente.nombre_paciente} ${autPaciente.apellidos_paciente}`;
+      setAutPaciente(null);
+      setAutOk(
+        `Autorizaste a ${nombre} para consultar ${especialidadSel}. Ahora el paciente puede agendar esa cita.`,
+      );
     } catch {
-      setTransferError("Error de conexión con el servidor");
+      setAutError("Error de conexión con el servidor");
     } finally {
-      setTransferSaving(false);
+      setAutSaving(false);
     }
   }
 
@@ -364,120 +310,75 @@ export default function PacientesPage() {
         </div>
       )}
 
-      {/* Modal: agendar cita */}
-      {citaPaciente && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
-          <Card className="flex w-full max-w-md flex-col gap-4 p-6">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display text-lg font-semibold text-ink">
-                Agendar cita
-              </h3>
-              <button
-                type="button"
-                onClick={() => setCitaPaciente(null)}
-                className="text-muted hover:text-ink"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <p className="text-sm text-slate">
-              {citaPaciente.nombre_paciente} {citaPaciente.apellidos_paciente}
-            </p>
-            <form onSubmit={submitAgendar} className="flex flex-col gap-4">
-              <Field label="Fecha y hora">
-                <Input
-                  type="datetime-local"
-                  required
-                  value={citaFecha}
-                  onChange={(e) => setCitaFecha(e.target.value)}
-                />
-              </Field>
-              <Field label="Motivo (opcional)">
-                <Input
-                  value={citaMotivo}
-                  onChange={(e) => setCitaMotivo(e.target.value)}
-                  placeholder="Control, primera vez…"
-                />
-              </Field>
-              <p className="text-xs text-muted">
-                Una cita para hoy habilita el botón de Consulta del paciente.
-              </p>
-              {citaError && <p className="text-sm text-danger">{citaError}</p>}
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setCitaPaciente(null)}
-                >
-                  Cancelar
-                </Button>
-                <Button type="submit" disabled={citaSaving}>
-                  {citaSaving ? "Agendando…" : "Agendar cita"}
-                </Button>
-              </div>
-            </form>
-          </Card>
+      {autOk && (
+        <div className="rounded-[var(--radius)] border border-success/30 bg-success/8 px-4 py-3 text-sm text-success">
+          {autOk}
         </div>
       )}
 
-      {/* Modal: remitir / transferir */}
-      {transferPaciente && (
+      {/* Modal: autorizar especialidad (remisión) */}
+      {autPaciente && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
           <Card className="flex w-full max-w-md flex-col gap-4 p-6">
             <div className="flex items-center justify-between">
               <h3 className="font-display text-lg font-semibold text-ink">
-                Remitir paciente
+                Autorizar especialista
               </h3>
               <button
                 type="button"
-                onClick={() => setTransferPaciente(null)}
+                onClick={() => setAutPaciente(null)}
                 className="text-muted hover:text-ink"
               >
                 <X className="size-4" />
               </button>
             </div>
             <p className="text-sm text-slate">
-              Reasignar a{" "}
+              Autoriza a{" "}
               <span className="font-medium text-ink">
-                {transferPaciente.nombre_paciente}{" "}
-                {transferPaciente.apellidos_paciente}
+                {autPaciente.nombre_paciente} {autPaciente.apellidos_paciente}
               </span>{" "}
-              a otro médico. Dejará de aparecer en tu lista.
+              a consultar una especialidad. El paciente agenda esa cita cuando
+              quiera. Sigues siendo su médico a cargo.
             </p>
-            <form onSubmit={submitTransfer} className="flex flex-col gap-4">
-              <Field label="Médico destino">
+            <form onSubmit={submitAutorizar} className="flex flex-col gap-4">
+              <Field label="Especialidad">
                 <select
                   className={selectClass}
                   required
-                  value={medicoDestino}
-                  onChange={(e) => setMedicoDestino(e.target.value)}
+                  value={especialidadSel}
+                  onChange={(e) => setEspecialidadSel(e.target.value)}
                 >
-                  <option value="">Seleccione un médico…</option>
-                  {medicos.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.nombre} — {m.especialidad}
+                  <option value="">Seleccione una especialidad…</option>
+                  {especialidades.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
                     </option>
                   ))}
                 </select>
               </Field>
-              {medicos.length <= 1 && (
+              {especialidades.length === 0 && (
                 <p className="text-xs text-muted">
-                  No hay otros médicos registrados para remitir todavía.
+                  No hay especialistas registrados todavía.
                 </p>
               )}
-              {transferError && (
-                <p className="text-sm text-danger">{transferError}</p>
-              )}
+              <Field label="Motivo (opcional)">
+                <Input
+                  value={autMotivo}
+                  onChange={(e) => setAutMotivo(e.target.value)}
+                  placeholder="Motivo de la remisión…"
+                />
+              </Field>
+              {autError && <p className="text-sm text-danger">{autError}</p>}
               <div className="flex justify-end gap-2">
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setTransferPaciente(null)}
+                  onClick={() => setAutPaciente(null)}
                 >
                   Cancelar
                 </Button>
-                <Button type="submit" disabled={transferSaving || !medicoDestino}>
-                  {transferSaving ? "Remitiendo…" : "Remitir paciente"}
+                <Button type="submit" disabled={autSaving || !especialidadSel}>
+                  {autSaving ? "Autorizando…" : "Autorizar"}
                 </Button>
               </div>
             </form>
@@ -673,8 +574,16 @@ export default function PacientesPage() {
                         {initials(p.nombre_paciente, p.apellidos_paciente)}
                       </span>
                       <div>
-                        <p className="font-medium text-navy-800">
+                        <p className="flex items-center gap-2 font-medium text-navy-800">
                           {p.nombre_paciente} {p.apellidos_paciente}
+                          {!p.es_tratante && (
+                            <span
+                              title="Paciente remitido por su médico general. Lo atiendes de forma temporal; su médico a cargo no cambia."
+                              className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning"
+                            >
+                              Temporal
+                            </span>
+                          )}
                         </p>
                         <p className="font-mono text-xs text-muted">
                           {p.numero_documento}
@@ -710,25 +619,26 @@ export default function PacientesPage() {
                         </span>
                       )}
 
-                      {/* Agendar cita */}
-                      <button
-                        type="button"
-                        onClick={() => openAgendar(p)}
-                        className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-line px-3 py-1.5 text-xs font-medium text-slate hover:bg-field"
-                      >
-                        <CalendarPlus className="size-3.5" />
-                        Agendar
-                      </button>
+                      {/* Autorizar especialista: solo el médico tratante */}
+                      {p.es_tratante && (
+                        <button
+                          type="button"
+                          onClick={() => openAutorizar(p)}
+                          className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-line px-3 py-1.5 text-xs font-medium text-slate hover:bg-field"
+                        >
+                          <ShieldCheck className="size-3.5" />
+                          Autorizar especialista
+                        </button>
+                      )}
 
-                      {/* Remitir a otro médico */}
-                      <button
-                        type="button"
-                        onClick={() => openTransfer(p)}
+                      {/* Fórmulas médicas */}
+                      <Link
+                        href={`/formulas?paciente=${p.id}`}
                         className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-line px-3 py-1.5 text-xs font-medium text-slate hover:bg-field"
                       >
-                        <Send className="size-3.5" />
-                        Remitir
-                      </button>
+                        <Pill className="size-3.5" />
+                        Fórmulas
+                      </Link>
 
                       {/* Ver historia clínica */}
                       <Link

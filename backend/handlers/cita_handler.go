@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,8 +25,10 @@ func NewCitaHandler(pool *pgxpool.Pool) *CitaHandler {
 }
 
 // Create maneja POST /api/v1/citas.
-// El médico autenticado agenda una cita a uno de sus pacientes. Una cita
-// 'programada' para hoy es la que habilita el botón de Consulta en la lista.
+// La agenda el PACIENTE autenticado. Puede agendar con:
+//   - su médico tratante (general), siempre; o
+//   - un especialista, solo si su médico general autorizó esa especialidad (remisión).
+// Agendar con un especialista NO cambia el médico tratante del paciente.
 func (h *CitaHandler) Create(c *gin.Context) {
 	userIDRaw, exists := c.Get("user_id")
 	if !exists {
@@ -43,14 +46,12 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	pacienteID, err := uuid.Parse(req.PacienteID)
+	medicoID, err := uuid.Parse(req.MedicoID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "paciente_id inválido"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "medico_id inválido"})
 		return
 	}
 
-	// Acepta "2006-01-02T15:04" (datetime-local) o el formato con segundos.
 	fechaHora, err := time.Parse("2006-01-02T15:04", req.FechaHora)
 	if err != nil {
 		fechaHora, err = time.Parse("2006-01-02T15:04:05", req.FechaHora)
@@ -62,11 +63,31 @@ func (h *CitaHandler) Create(c *gin.Context) {
 
 	ctx := context.Background()
 
-	var medicoID uuid.UUID
-	err = h.pool.QueryRow(ctx, `SELECT id FROM medico WHERE usuario_id = $1`, userID).Scan(&medicoID)
+	// Solo un paciente agenda sus citas.
+	var pacienteID uuid.UUID
+	var tratanteID *uuid.UUID
+	err = h.pool.QueryRow(ctx,
+		`SELECT p.id, hc.medico_tratante_id
+		 FROM paciente p JOIN historia_clinica hc ON hc.paciente_id = p.id
+		 WHERE p.usuario_id = $1`, userID,
+	).Scan(&pacienteID, &tratanteID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede agendar citas"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "solo un paciente puede agendar sus citas"})
+			return
+		}
+		log.Printf("lookup paciente error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify paciente"})
+		return
+	}
+
+	// El médico destino: puede ser el tratante o un especialista.
+	var especialidad string
+	if err := h.pool.QueryRow(ctx,
+		`SELECT especialidad FROM medico WHERE id = $1 AND estado = true`, medicoID,
+	).Scan(&especialidad); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "el médico no existe"})
 			return
 		}
 		log.Printf("lookup medico error: %v", err)
@@ -74,20 +95,25 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// La cita solo puede agendarse para un paciente del propio médico tratante.
-	var esTratante bool
-	if err := h.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM historia_clinica
-		   WHERE paciente_id = $1 AND medico_tratante_id = $2)`,
-		pacienteID, medicoID,
-	).Scan(&esTratante); err != nil {
-		log.Printf("check tratante error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify paciente"})
-		return
-	}
+	esTratante := tratanteID != nil && *tratanteID == medicoID
 	if !esTratante {
-		c.JSON(http.StatusForbidden, gin.H{"error": "el paciente no está bajo su cuidado"})
-		return
+		// Debe existir una remisión autorizada para esa especialidad.
+		var autorizado bool
+		if err := h.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM remision
+			   WHERE paciente_id = $1 AND estado = 'autorizada' AND especialidad = $2)`,
+			pacienteID, especialidad,
+		).Scan(&autorizado); err != nil {
+			log.Printf("check remision error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify autorización"})
+			return
+		}
+		if !autorizado {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "no tienes autorización para agendar con esta especialidad",
+			})
+			return
+		}
 	}
 
 	var citaID uuid.UUID
@@ -107,5 +133,7 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		"id":          citaID,
 		"paciente_id": pacienteID,
 		"fecha_hora":  fechaHora,
+		"es_tratante": esTratante,
+		"especialidad": strings.TrimSpace(especialidad),
 	})
 }

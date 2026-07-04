@@ -15,6 +15,8 @@ type Handler struct {
 	consulta *handlers.ConsultaHandler
 	cita     *handlers.CitaHandler
 	entidad  *handlers.EntidadHandler
+	formula  *handlers.FormulaHandler
+	anexo    *handlers.AnexoHandler
 }
 
 func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
@@ -24,6 +26,8 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		consulta: handlers.NewConsultaHandler(pool),
 		cita:     handlers.NewCitaHandler(pool),
 		entidad:  handlers.NewEntidadHandler(pool),
+		formula:  handlers.NewFormulaHandler(pool),
+		anexo:    handlers.NewAnexoHandler(pool, cfg.UploadsDir),
 	}
 
 	r.GET("/health", func(c *gin.Context) {
@@ -42,19 +46,30 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		{
 			pacientes.GET("", middleware.RequireAuth(cfg), h.paciente.List)
 			pacientes.GET("/me", middleware.RequireAuth(cfg), h.paciente.Me)
-			pacientes.GET("/:id", h.paciente.GetByID)
+			pacientes.GET("/:id", middleware.RequireAuth(cfg), h.paciente.GetByID)
 			pacientes.GET("/:id/consultas", h.consulta.ListByPaciente)
+			pacientes.GET("/:id/formulas", h.formula.ListByPaciente)
 			pacientes.POST("", middleware.RequireAuth(cfg), h.paciente.Create)
-			pacientes.POST("/:id/transferir", middleware.RequireAuth(cfg), h.paciente.Transfer)
+			// El médico general autoriza a su paciente una especialidad (no cambia tratante).
+			pacientes.POST("/:id/remisiones", middleware.RequireAuth(cfg), h.paciente.AutorizarEspecialidad)
 		}
 
-		api.GET("/medicos", middleware.RequireAuth(cfg), h.paciente.ListMedicos)
+		api.GET("/especialidades", middleware.RequireAuth(cfg), h.paciente.ListEspecialidades)
+
+		// Agenda del paciente (su tratante, especialidades autorizadas y citas).
+		api.GET("/mi/agenda", middleware.RequireAuth(cfg), h.paciente.MiAgenda)
 
 		consultas := api.Group("/consultas")
 		{
 			consultas.POST("", middleware.RequireAuth(cfg), h.consulta.Create)
+			// Adjuntar resultados/imágenes a una consulta (HU-07).
+			consultas.POST("/:id/anexos", middleware.RequireAuth(cfg), h.anexo.Create)
 		}
 
+		// Ver el archivo de un anexo.
+		api.GET("/anexos/:id/archivo", middleware.RequireAuth(cfg), h.anexo.Serve)
+
+		// El paciente agenda sus citas (con su tratante o un especialista autorizado).
 		citas := api.Group("/citas")
 		{
 			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
@@ -64,6 +79,12 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		{
 			entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)
 			entidades.POST("", middleware.RequireAuth(cfg), h.entidad.Create)
+		}
+
+		formulas := api.Group("/formulas")
+		{
+			formulas.POST("", middleware.RequireAuth(cfg), h.formula.Create)
+			formulas.POST("/:id/anular", middleware.RequireAuth(cfg), h.formula.Anular)
 		}
 	}
 }

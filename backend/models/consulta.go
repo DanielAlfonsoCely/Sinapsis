@@ -39,6 +39,11 @@ type CreateConsultaRequest struct {
 	ObservacionesMedico     *string `json:"observaciones_medico"`
 
 	ProximaCita *string `json:"proxima_cita"` // YYYY-MM-DD, opcional
+
+	// Fórmula médica emitida durante la consulta (HU-06). Opcional: si viene con
+	// medicamentos, se registra en la misma transacción, ligada a esta consulta.
+	Medicamentos        []Medicamento `json:"medicamentos" binding:"omitempty,dive"`
+	FormulaIndicaciones *string       `json:"formula_indicaciones"`
 }
 
 // ConsultaListItem es cada entrada de la historia clínica de un paciente (HU-04),
@@ -74,4 +79,13 @@ type ConsultaListItem struct {
 
 	MedicoNombre       string `json:"medico_nombre"`
 	MedicoEspecialidad string `json:"medico_especialidad"`
+
+	Anexos []AnexoItem `json:"anexos"`
+}
+
+// AnexoItem es un resultado/imagen adjunto a una consulta (HU-07).
+type AnexoItem struct {
+	ID     string `json:"id"`
+	Nombre string `json:"nombre"`
+	Tipo   string `json:"tipo"`
 }

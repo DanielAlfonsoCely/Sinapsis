@@ -18,7 +18,8 @@ type PacienteListItem struct {
 	Email             *string    `json:"email"`
 	UltimaConsulta    *time.Time `json:"ultima_consulta"`
 	ProximaCita       *time.Time `json:"proxima_cita"`
-	TieneCitaHoy      bool       `json:"tiene_cita_hoy"` // hay cita 'programada' para hoy -> se puede consultar
+	TieneCitaHoy      bool       `json:"tiene_cita_hoy"` // hay cita 'programada' para hoy con este médico
+	EsTratante        bool       `json:"es_tratante"`    // true = paciente propio; false = temporal (especialista)
 	Estado            bool       `json:"estado"`
 }
 
@@ -37,12 +38,7 @@ type CreatePacienteRequest struct {
 	Direccion         *string `json:"direccion"`
 }
 
-// TransferRequest es el payload para remitir/transferir un paciente a otro médico.
-type TransferRequest struct {
-	MedicoDestinoID string `json:"medico_destino_id" binding:"required,uuid"`
-}
-
-// MedicoListItem es cada médico disponible como destino de una remisión.
+// MedicoListItem es cada médico (usado para listar especialistas de una especialidad).
 type MedicoListItem struct {
 	ID           uuid.UUID `json:"id"`
 	Nombre       string    `json:"nombre"`
@@ -74,4 +70,8 @@ type Paciente struct {
 	NumeroAfiliacion     *string   `json:"numero_afiliacion"`
 	FechaRegistro        time.Time `json:"fecha_registro"`
 	Estado               bool      `json:"estado"`
+	// TieneCitaHoy indica si el paciente tiene una cita programada para hoy.
+	// Se completa en GetByID (gate de "solo consultar con cita"); en otros
+	// lugares queda en false.
+	TieneCitaHoy bool `json:"tiene_cita_hoy"`
 }
