@@ -98,16 +98,7 @@ CREATE TABLE medico (
     fecha_registro TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE ips (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    entidad_id UUID NOT NULL,
-    codigo_ips VARCHAR(50) UNIQUE NOT NULL,
-    resolucion_minsal VARCHAR(100),
-    fecha_resolucion DATE,
-    capacidad_camas INT,
-    horario_atencion VARCHAR(100),
-    servicios TEXT
-);
+
 
 CREATE TABLE administrador_entidad (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -14,6 +14,7 @@ type Handler struct {
 	paciente *handlers.PacienteHandler
 	consulta *handlers.ConsultaHandler
 	cita     *handlers.CitaHandler
+	entidad  *handlers.EntidadHandler
 }
 
 func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
@@ -22,6 +23,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		paciente: handlers.NewPacienteHandler(pool),
 		consulta: handlers.NewConsultaHandler(pool),
 		cita:     handlers.NewCitaHandler(pool),
+		entidad:  handlers.NewEntidadHandler(pool),
 	}
 
 	r.GET("/health", func(c *gin.Context) {
@@ -56,6 +58,12 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		citas := api.Group("/citas")
 		{
 			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
+		}
+
+		entidades := api.Group("/entidades")
+		{
+			entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)
+			entidades.POST("", middleware.RequireAuth(cfg), h.entidad.Create)
 		}
 	}
 }
