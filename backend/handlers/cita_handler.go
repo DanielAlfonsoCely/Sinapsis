@@ -144,9 +144,11 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		return
 	}
 
-	fechaHora, err := time.Parse("2006-01-02T15:04", req.FechaHora)
+	// Usamos offset fijo -05:00 (Colombia) para evitar LoadLocation que falla en Docker sin tzdata.
+	bogota := time.FixedZone("America/Bogota", -5*60*60)
+	fechaHora, err := time.ParseInLocation("2006-01-02T15:04", req.FechaHora, bogota)
 	if err != nil {
-		fechaHora, err = time.Parse("2006-01-02T15:04:05", req.FechaHora)
+		fechaHora, err = time.ParseInLocation("2006-01-02T15:04:05", req.FechaHora, bogota)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "fecha_hora debe tener formato YYYY-MM-DDTHH:MM"})
 			return
@@ -227,5 +229,109 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		"fecha_hora":   fechaHora,
 		"es_tratante":  esTratante,
 		"especialidad": strings.TrimSpace(especialidad),
+	})
+}
+
+// CitasSemana maneja GET /api/v1/citas/semana?fecha=YYYY-MM-DD
+// Retorna todas las citas del médico autenticado para la semana que contiene la fecha dada.
+// Si no se pasa ?fecha, usa la semana actual.
+func (h *CitaHandler) CitasSemana(c *gin.Context) {
+	userIDRaw, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+	userID, err := uuid.Parse(userIDRaw.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+		return
+	}
+
+	var medicoID uuid.UUID
+	err = h.pool.QueryRow(context.Background(),
+		`SELECT id FROM medico WHERE usuario_id = $1`, userID,
+	).Scan(&medicoID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede ver su agenda"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
+		return
+	}
+
+	// Calcular inicio de semana (lunes) a partir de ?fecha o hoy.
+	// Usamos offset fijo -05:00 (Colombia) para no depender de tzdata en Docker.
+	fechaParam := c.Query("fecha")
+	bogota := time.FixedZone("America/Bogota", -5*60*60)
+	var ref time.Time
+	if fechaParam != "" {
+		ref, err = time.ParseInLocation("2006-01-02", fechaParam, bogota)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "fecha debe tener formato YYYY-MM-DD"})
+			return
+		}
+	} else {
+		ref = time.Now().In(bogota)
+	}
+	// Retroceder al lunes en hora Bogotá
+	weekday := int(ref.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+	lunes := ref.AddDate(0, 0, -(weekday - 1))
+	lunes = time.Date(lunes.Year(), lunes.Month(), lunes.Day(), 0, 0, 0, 0, bogota)
+	domingo := lunes.AddDate(0, 0, 7)
+
+	rows, err := h.pool.Query(context.Background(),
+		`SELECT ci.id, ci.fecha_hora, ci.estado, ci.motivo,
+		        p.id, p.nombre_paciente, p.apellidos_paciente, p.numero_documento
+		 FROM cita ci
+		 JOIN paciente p ON p.id = ci.paciente_id
+		 WHERE ci.medico_id = $1
+		   AND ci.fecha_hora >= $2
+		   AND ci.fecha_hora < $3
+		 ORDER BY ci.fecha_hora`,
+		medicoID, lunes, domingo,
+	)
+	if err != nil {
+		log.Printf("list citas semana error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch citas"})
+		return
+	}
+	defer rows.Close()
+
+	type PacienteResumen struct {
+		ID                string `json:"id"`
+		NombrePaciente    string `json:"nombre_paciente"`
+		ApellidosPaciente string `json:"apellidos_paciente"`
+		NumeroDocumento   string `json:"numero_documento"`
+	}
+	type CitaItem struct {
+		ID        string          `json:"id"`
+		FechaHora time.Time       `json:"fecha_hora"`
+		Estado    string          `json:"estado"`
+		Motivo    *string         `json:"motivo"`
+		Paciente  PacienteResumen `json:"paciente"`
+	}
+
+	citas := make([]CitaItem, 0)
+	for rows.Next() {
+		var ci CitaItem
+		if err := rows.Scan(
+			&ci.ID, &ci.FechaHora, &ci.Estado, &ci.Motivo,
+			&ci.Paciente.ID, &ci.Paciente.NombrePaciente, &ci.Paciente.ApellidosPaciente, &ci.Paciente.NumeroDocumento,
+		); err != nil {
+			log.Printf("scan cita semana error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read citas"})
+			return
+		}
+		citas = append(citas, ci)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"citas":        citas,
+		"semana_desde": lunes.Format("2006-01-02"),
+		"semana_hasta": domingo.AddDate(0, 0, -1).Format("2006-01-02"),
 	})
 }

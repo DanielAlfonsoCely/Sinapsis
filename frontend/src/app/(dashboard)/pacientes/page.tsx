@@ -32,6 +32,9 @@ const EMPTY_FORM = {
   email: "",
   telefono: "",
   direccion: "",
+  tipo_sangre: "",
+  alergias: "",
+  aseguradora: "",
 };
 
 type CredencialesGeneradas = {
@@ -198,6 +201,9 @@ export default function PacientesPage() {
       if (form.sexo) body.sexo = form.sexo;
       if (form.telefono) body.telefono = form.telefono;
       if (form.direccion) body.direccion = form.direccion;
+      if (form.tipo_sangre) body.tipo_sangre = form.tipo_sangre;
+      if (form.alergias) body.alergias = form.alergias;
+      if (form.aseguradora) body.aseguradora = form.aseguradora;
 
       const res = await fetch("http://localhost:8080/api/v1/pacientes", {
         method: "POST",
@@ -484,7 +490,38 @@ export default function PacientesPage() {
                   }
                 />
               </Field>
+              <Field label="Grupo sanguíneo">
+                <select
+                  className={selectClass}
+                  value={form.tipo_sangre}
+                  onChange={(e) => setForm({ ...form, tipo_sangre: e.target.value })}
+                >
+                  <option value="">Desconocido</option>
+                  <option value="A+">A+</option>
+                  <option value="A-">A-</option>
+                  <option value="B+">B+</option>
+                  <option value="B-">B-</option>
+                  <option value="AB+">AB+</option>
+                  <option value="AB-">AB-</option>
+                  <option value="O+">O+</option>
+                  <option value="O-">O-</option>
+                </select>
+              </Field>
+              <Field label="Aseguradora">
+                <Input
+                  value={form.aseguradora}
+                  onChange={(e) => setForm({ ...form, aseguradora: e.target.value })}
+                  placeholder="Ej: Sura, Nueva EPS…"
+                />
+              </Field>
             </div>
+            <Field label="Alergias">
+              <Input
+                value={form.alergias}
+                onChange={(e) => setForm({ ...form, alergias: e.target.value })}
+                placeholder="Ej: Penicilina, mariscos… (opcional)"
+              />
+            </Field>
             <Field label="Dirección">
               <Input
                 value={form.direccion}

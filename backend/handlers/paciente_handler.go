@@ -597,11 +597,13 @@ func (h *PacienteHandler) Create(c *gin.Context) {
 	var fechaRegistro time.Time
 	err = tx.QueryRow(ctx,
 		`INSERT INTO paciente (usuario_id, numero_documento, tipo_documento, nombre_paciente, apellidos_paciente,
-		                       fecha_nacimiento, sexo, telefono, email, direccion, fecha_registro, estado)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), true)
+		                       fecha_nacimiento, sexo, telefono, email, direccion,
+		                       tipo_sangre, alergias, aseguradora, fecha_registro, estado)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), true)
 		 RETURNING id, fecha_registro`,
 		usuarioID, req.NumeroDocumento, req.TipoDocumento, req.NombrePaciente, req.ApellidosPaciente,
 		fechaNacimiento, req.Sexo, req.Telefono, req.Email, req.Direccion,
+		req.TipoSangre, req.Alergias, req.Aseguradora,
 	).Scan(&pacienteID, &fechaRegistro)
 	if err != nil {
 		var pgErr *pgconn.PgError

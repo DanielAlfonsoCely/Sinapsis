@@ -36,6 +36,9 @@ type CreatePacienteRequest struct {
 	Email             string  `json:"email" binding:"required,email"`
 	Telefono          *string `json:"telefono"`
 	Direccion         *string `json:"direccion"`
+	TipoSangre        *string `json:"tipo_sangre"`
+	Alergias          *string `json:"alergias"`
+	Aseguradora       *string `json:"aseguradora"`
 }
 
 // MedicoListItem es cada médico (usado para listar especialistas de una especialidad).

@@ -67,6 +67,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		citas := api.Group("/citas")
 		{
 			citas.GET("/hoy", middleware.RequireAuth(cfg), h.cita.CitasHoy)
+			citas.GET("/semana", middleware.RequireAuth(cfg), h.cita.CitasSemana)
 			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
 		}
 
