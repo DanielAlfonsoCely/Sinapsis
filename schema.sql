@@ -9,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TYPE tipo_documento_enum AS ENUM ('CC', 'TI', 'CE', 'PA', 'RC');
 CREATE TYPE sexo_enum AS ENUM ('M', 'F', 'O');
 CREATE TYPE estado_consulta_enum AS ENUM ('programada', 'en_curso', 'completada', 'cancelada', 'no_asistio');
-CREATE TYPE estado_formula_enum AS ENUM ('vigente', 'reclamada', 'vencida', 'atrasada');
+CREATE TYPE estado_formula_enum AS ENUM ('vigente', 'anulada');
 CREATE TYPE estado_consentimiento_enum AS ENUM ('pendiente', 'aprobado', 'denegado');
 CREATE TYPE tipo_operacion_enum AS ENUM ('crear', 'actualizar', 'eliminar', 'consultar', 'exportar', 'cambiar_permisos', 'usar_ia');
 CREATE TYPE tipo_entidad_enum AS ENUM ('IPS', 'EPS', 'clinica', 'hospital', 'consultorio');
@@ -98,16 +98,7 @@ CREATE TABLE medico (
     fecha_registro TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE ips (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    entidad_id UUID NOT NULL,
-    codigo_ips VARCHAR(50) UNIQUE NOT NULL,
-    resolucion_minsal VARCHAR(100),
-    fecha_resolucion DATE,
-    capacidad_camas INT,
-    horario_atencion VARCHAR(100),
-    servicios TEXT
-);
+
 
 CREATE TABLE administrador_entidad (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -138,7 +129,7 @@ CREATE TABLE historia_clinica (
     CONSTRAINT uq_paciente_historia UNIQUE (paciente_id)  -- RN-003: un paciente, una historia
 );
 
--- Agenda mínima: cita = turno programado de un paciente con un médico.
+-- Agenda mínima: cita = turno que el paciente agenda con un médico.
 -- Se considera "activa en el horario" cuando estado='programada' y es para hoy.
 CREATE TABLE cita (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -147,6 +138,18 @@ CREATE TABLE cita (
     fecha_hora TIMESTAMP NOT NULL,
     motivo VARCHAR(255),
     estado estado_consulta_enum NOT NULL DEFAULT 'programada',
+    fecha_creacion TIMESTAMP DEFAULT NOW()
+);
+
+-- Remisión: autorización de un médico general para que su paciente consulte una
+-- especialidad. NO cambia el médico tratante; el especialista atiende temporalmente.
+CREATE TABLE remision (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    paciente_id UUID NOT NULL,
+    medico_remitente_id UUID NOT NULL,   -- médico general (tratante) que autoriza
+    especialidad VARCHAR(100) NOT NULL,  -- especialidad autorizada
+    motivo TEXT,
+    estado VARCHAR(20) NOT NULL DEFAULT 'autorizada', -- autorizada / cancelada
     fecha_creacion TIMESTAMP DEFAULT NOW()
 );
 
@@ -188,6 +191,7 @@ CREATE TABLE formula_medica (
     historia_clinica_id UUID NOT NULL,
     paciente_id UUID NOT NULL,
     medico_id UUID NOT NULL,
+    consulta_id UUID,  -- consulta donde se recetó (para enlazar con la HC)
     medicamentos JSONB NOT NULL,
     fecha_prescripcion TIMESTAMP DEFAULT NOW() NOT NULL,
     fecha_vencimiento DATE,
@@ -203,9 +207,10 @@ CREATE TABLE examinagen (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     historia_clinica_id UUID NOT NULL,
     paciente_id UUID NOT NULL,
-    tipo_examen VARCHAR(100) NOT NULL,
-    descripcion TEXT,
-    url_imagen VARCHAR(255),
+    consulta_id UUID,                     -- consulta a la que se adjuntó el anexo (HU-07)
+    tipo_examen VARCHAR(100) NOT NULL,    -- categoría: imagen / documento
+    descripcion TEXT,                     -- nombre del anexo (ej: "RX tórax")
+    url_imagen VARCHAR(255),              -- nombre del archivo almacenado en el volumen
     fecha_examen TIMESTAMP DEFAULT NOW() NOT NULL,
     medico_solicitante_id UUID NOT NULL,
     estado_examen VARCHAR(50),
@@ -293,6 +298,9 @@ ALTER TABLE historia_clinica ADD CONSTRAINT fk_hc_medico_tratante FOREIGN KEY (m
 ALTER TABLE cita ADD CONSTRAINT fk_cita_paciente FOREIGN KEY (paciente_id) REFERENCES paciente(id) ON DELETE RESTRICT;
 ALTER TABLE cita ADD CONSTRAINT fk_cita_medico FOREIGN KEY (medico_id) REFERENCES medico(id) ON DELETE RESTRICT;
 
+ALTER TABLE remision ADD CONSTRAINT fk_remision_paciente FOREIGN KEY (paciente_id) REFERENCES paciente(id) ON DELETE RESTRICT;
+ALTER TABLE remision ADD CONSTRAINT fk_remision_medico FOREIGN KEY (medico_remitente_id) REFERENCES medico(id) ON DELETE RESTRICT;
+
 ALTER TABLE consulta ADD CONSTRAINT fk_consulta_hc FOREIGN KEY (historia_clinica_id) REFERENCES historia_clinica(id) ON DELETE RESTRICT;
 ALTER TABLE consulta ADD CONSTRAINT fk_consulta_paciente FOREIGN KEY (paciente_id) REFERENCES paciente(id) ON DELETE RESTRICT;
 ALTER TABLE consulta ADD CONSTRAINT fk_consulta_medico FOREIGN KEY (medico_id) REFERENCES medico(id) ON DELETE RESTRICT;
@@ -300,10 +308,12 @@ ALTER TABLE consulta ADD CONSTRAINT fk_consulta_medico FOREIGN KEY (medico_id) R
 ALTER TABLE formula_medica ADD CONSTRAINT fk_formula_hc FOREIGN KEY (historia_clinica_id) REFERENCES historia_clinica(id) ON DELETE RESTRICT;
 ALTER TABLE formula_medica ADD CONSTRAINT fk_formula_paciente FOREIGN KEY (paciente_id) REFERENCES paciente(id) ON DELETE RESTRICT;
 ALTER TABLE formula_medica ADD CONSTRAINT fk_formula_medico FOREIGN KEY (medico_id) REFERENCES medico(id) ON DELETE RESTRICT;
+ALTER TABLE formula_medica ADD CONSTRAINT fk_formula_consulta FOREIGN KEY (consulta_id) REFERENCES consulta(id) ON DELETE RESTRICT;
 
 ALTER TABLE examinagen ADD CONSTRAINT fk_examen_hc FOREIGN KEY (historia_clinica_id) REFERENCES historia_clinica(id) ON DELETE RESTRICT;
 ALTER TABLE examinagen ADD CONSTRAINT fk_examen_paciente FOREIGN KEY (paciente_id) REFERENCES paciente(id) ON DELETE RESTRICT;
 ALTER TABLE examinagen ADD CONSTRAINT fk_examen_medico FOREIGN KEY (medico_solicitante_id) REFERENCES medico(id) ON DELETE RESTRICT;
+ALTER TABLE examinagen ADD CONSTRAINT fk_examen_consulta FOREIGN KEY (consulta_id) REFERENCES consulta(id) ON DELETE RESTRICT;
 
 ALTER TABLE sugerencia_ia ADD CONSTRAINT fk_sia_examen FOREIGN KEY (examinagen_id) REFERENCES examinagen(id) ON DELETE RESTRICT;
 ALTER TABLE sugerencia_ia ADD CONSTRAINT fk_sia_hc FOREIGN KEY (historia_clinica_id) REFERENCES historia_clinica(id) ON DELETE RESTRICT;
@@ -327,11 +337,14 @@ CREATE INDEX idx_hc_paciente ON historia_clinica(paciente_id);
 CREATE INDEX idx_hc_medico_tratante ON historia_clinica(medico_tratante_id);
 CREATE INDEX idx_cita_paciente ON cita(paciente_id);
 CREATE INDEX idx_cita_medico_fecha ON cita(medico_id, fecha_hora);
+CREATE INDEX idx_remision_paciente ON remision(paciente_id);
 CREATE INDEX idx_consulta_hc ON consulta(historia_clinica_id);
 CREATE INDEX idx_consulta_medico ON consulta(medico_id);
 CREATE INDEX idx_consulta_paciente ON consulta(paciente_id);
 CREATE INDEX idx_formula_hc ON formula_medica(historia_clinica_id);
+CREATE INDEX idx_formula_consulta ON formula_medica(consulta_id);
 CREATE INDEX idx_examen_hc ON examinagen(historia_clinica_id);
+CREATE INDEX idx_examen_consulta ON examinagen(consulta_id);
 CREATE INDEX idx_bitacora_usuario ON bitacora_auditoria(usuario_id);
 CREATE INDEX idx_bitacora_fecha ON bitacora_auditoria(fecha_operacion);
 CREATE INDEX idx_usuario_email ON usuario(email);

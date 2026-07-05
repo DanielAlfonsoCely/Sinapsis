@@ -13,10 +13,11 @@ import {
   Paperclip,
   Save,
   ChevronLeft,
-  Plus,
-  Trash2,
   Upload,
   AlertTriangle,
+  Plus,
+  Trash2,
+  CalendarX,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -39,6 +40,7 @@ type Paciente = {
   tipo_sangre: string | null;
   alergias: string | null;
   aseguradora: string | null;
+  tiene_cita_hoy: boolean;
 };
 
 type Medicamento = {
@@ -46,6 +48,15 @@ type Medicamento = {
   dosis: string;
   frecuencia: string;
   duracion: string;
+  cantidad: string;
+};
+
+const EMPTY_MED: Medicamento = {
+  nombre: "",
+  dosis: "",
+  frecuencia: "",
+  duracion: "",
+  cantidad: "",
 };
 
 const EMPTY_FORM = {
@@ -89,19 +100,18 @@ function ConsultaForm() {
   const [loadingPaciente, setLoadingPaciente] = useState(true);
   const [form, setForm] = useState(EMPTY_FORM);
 
-  // Medicamentos y adjuntos son solo de la UI por ahora: corresponden a las
-  // HU-06 (fórmulas médicas) y HU-07 (adjuntar resultados) y no se envían al back.
-  const [medicamentos, setMedicamentos] = useState<Medicamento[]>([]);
-  const [medForm, setMedForm] = useState<Medicamento>({
-    nombre: "",
-    dosis: "",
-    frecuencia: "",
-    duracion: "",
-  });
-  const [adjuntos, setAdjuntos] = useState<string[]>([]);
+  // Medicamentos: se recetan durante la consulta y se guardan como fórmula
+  // médica (HU-06) en la misma operación.
+  const [meds, setMeds] = useState<Medicamento[]>([{ ...EMPTY_MED }]);
+  const [formulaIndicaciones, setFormulaIndicaciones] = useState("");
+
+  // Resultados adjuntos (HU-07): se suben tras crear la consulta.
+  const [adjuntos, setAdjuntos] = useState<{ file: File; nombre: string }[]>([]);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Si la consulta ya se creó pero falló algún anexo, permite continuar sin duplicarla.
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!pacienteId) {
@@ -128,15 +138,18 @@ function ConsultaForm() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function addMedicamento() {
-    if (!medForm.nombre.trim()) return;
-    setMedicamentos((m) => [...m, medForm]);
-    setMedForm({ nombre: "", dosis: "", frecuencia: "", duracion: "" });
+  function updateMed(i: number, key: keyof Medicamento, value: string) {
+    setMeds((m) => m.map((med, j) => (j === i ? { ...med, [key]: value } : med)));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!pacienteId) return;
+    // Si la consulta ya se guardó (reintento tras fallar un anexo), solo continúa.
+    if (createdId) {
+      router.push(`/historia-clinica?paciente=${pacienteId}`);
+      return;
+    }
     if (!form.motivo_consulta.trim()) {
       setError("El motivo de consulta es obligatorio.");
       return;
@@ -183,6 +196,14 @@ function ConsultaForm() {
       if (form[k]) body[k] = parseFloat(form[k]);
     }
 
+    // Fórmula médica emitida durante la consulta (HU-06): se manda junto y el
+    // backend la guarda en la misma transacción, ligada a esta consulta.
+    const validMeds = meds.filter((m) => m.nombre.trim());
+    if (validMeds.length > 0) {
+      body.medicamentos = validMeds;
+      if (formulaIndicaciones) body.formula_indicaciones = formulaIndicaciones;
+    }
+
     try {
       const token = localStorage.getItem("token");
       const res = await fetch("http://localhost:8080/api/v1/consultas", {
@@ -196,13 +217,42 @@ function ConsultaForm() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error ?? "No se pudo registrar la consulta");
+        setSaving(false);
         return;
       }
+
+      // La consulta quedó guardada; ahora se suben los anexos (HU-07).
+      const consultaId: string = data.id;
+      setCreatedId(consultaId);
+
+      const fallidos: string[] = [];
+      for (const a of adjuntos) {
+        const fd = new FormData();
+        fd.append("archivo", a.file);
+        if (a.nombre.trim()) fd.append("nombre", a.nombre.trim());
+        const up = await fetch(
+          `http://localhost:8080/api/v1/consultas/${consultaId}/anexos`,
+          {
+            method: "POST",
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            body: fd,
+          },
+        );
+        if (!up.ok) fallidos.push(a.nombre.trim() || a.file.name);
+      }
+
+      if (fallidos.length > 0) {
+        setError(
+          `La consulta se guardó, pero no se pudieron subir: ${fallidos.join(", ")}. Puedes continuar a la historia clínica.`,
+        );
+        setSaving(false);
+        return;
+      }
+
       // Al finalizar, se ve reflejada en la historia clínica del paciente.
       router.push(`/historia-clinica?paciente=${pacienteId}`);
     } catch {
       setError("Error de conexión con el servidor");
-    } finally {
       setSaving(false);
     }
   }
@@ -225,6 +275,49 @@ function ConsultaForm() {
   if (loadingPaciente) {
     return (
       <Card className="p-10 text-center text-slate">Cargando paciente…</Card>
+    );
+  }
+
+  if (!paciente) {
+    return (
+      <Card className="flex flex-col items-center gap-3 p-10 text-center">
+        <Stethoscope className="size-10 text-muted" />
+        <p className="font-medium text-ink">No se encontró el paciente</p>
+        <Button asChild variant="outline">
+          <Link href="/pacientes">Volver a Pacientes</Link>
+        </Button>
+      </Card>
+    );
+  }
+
+  // Gate: solo se puede consultar si el paciente tiene una cita activa para hoy,
+  // sin importar cómo se haya llegado a esta página (URL directa, HC, etc.).
+  if (!paciente.tiene_cita_hoy) {
+    return (
+      <Card className="mx-auto flex max-w-lg flex-col items-center gap-3 p-10 text-center">
+        <span className="flex size-12 items-center justify-center rounded-full bg-warning/10 text-warning">
+          <CalendarX className="size-6" />
+        </span>
+        <p className="font-display text-lg font-semibold text-ink">
+          {paciente.nombre_paciente} {paciente.apellidos_paciente} no tiene cita
+          para hoy
+        </p>
+        <p className="text-sm text-slate">
+          Solo puedes iniciar una consulta si el paciente tiene una cita
+          programada para hoy. Agenda una cita desde la lista de pacientes.
+        </p>
+        <div className="flex flex-wrap justify-center gap-2 pt-1">
+          <Button asChild variant="outline">
+            <Link href={`/historia-clinica?paciente=${paciente.id}`}>
+              <FileText className="size-4" />
+              Ver historia clínica
+            </Link>
+          </Button>
+          <Button asChild>
+            <Link href="/pacientes">Ir a Pacientes</Link>
+          </Button>
+        </div>
+      </Card>
     );
   }
 
@@ -486,77 +579,88 @@ function ConsultaForm() {
         </div>
       </Card>
 
-      {/* Medicamentos recetados — solo UI (HU-06) */}
-      <Card className="flex flex-col gap-5 p-6">
+      {/* Medicamentos recetados → se guardan como fórmula médica (HU-06) */}
+      <Card className="flex flex-col gap-4 p-6">
         <SectionTitle
           icon={Pill}
           title="Medicamentos recetados"
-          hint="Se guardará con la fórmula médica (HU-06)"
+          hint="Se emiten como fórmula médica de esta consulta"
         />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]">
-          <Input
-            value={medForm.nombre}
-            onChange={(e) => setMedForm({ ...medForm, nombre: e.target.value })}
-            placeholder="Medicamento"
-          />
-          <Input
-            value={medForm.dosis}
-            onChange={(e) => setMedForm({ ...medForm, dosis: e.target.value })}
-            placeholder="Dosis (500 mg)"
-          />
-          <Input
-            value={medForm.frecuencia}
-            onChange={(e) =>
-              setMedForm({ ...medForm, frecuencia: e.target.value })
-            }
-            placeholder="Frecuencia (c/8h)"
-          />
-          <Input
-            value={medForm.duracion}
-            onChange={(e) =>
-              setMedForm({ ...medForm, duracion: e.target.value })
-            }
-            placeholder="Duración (7 días)"
-          />
-          <Button type="button" variant="outline" onClick={addMedicamento}>
-            <Plus className="size-4" />
-            Agregar
-          </Button>
-        </div>
-        {medicamentos.length > 0 && (
-          <div className="flex flex-col gap-2">
-            {medicamentos.map((m, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between rounded-[var(--radius)] border border-line bg-shell px-4 py-2 text-sm"
+        <div className="flex flex-col gap-2">
+          {meds.map((m, i) => (
+            <div
+              key={i}
+              className="grid grid-cols-2 gap-2 sm:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto]"
+            >
+              <Input
+                placeholder="Medicamento"
+                value={m.nombre}
+                onChange={(e) => updateMed(i, "nombre", e.target.value)}
+              />
+              <Input
+                placeholder="Dosis"
+                value={m.dosis}
+                onChange={(e) => updateMed(i, "dosis", e.target.value)}
+              />
+              <Input
+                placeholder="Frecuencia"
+                value={m.frecuencia}
+                onChange={(e) => updateMed(i, "frecuencia", e.target.value)}
+              />
+              <Input
+                placeholder="Duración"
+                value={m.duracion}
+                onChange={(e) => updateMed(i, "duracion", e.target.value)}
+              />
+              <Input
+                placeholder="Cantidad"
+                value={m.cantidad}
+                onChange={(e) => updateMed(i, "cantidad", e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setMeds((list) =>
+                    list.length > 1 ? list.filter((_, j) => j !== i) : list,
+                  )
+                }
+                className="flex items-center justify-center px-2 text-danger hover:opacity-70"
+                title="Quitar"
               >
-                <span className="text-navy-800">
-                  <span className="font-medium">{m.nombre}</span>
-                  {m.dosis && ` · ${m.dosis}`}
-                  {m.frecuencia && ` · ${m.frecuencia}`}
-                  {m.duracion && ` · ${m.duracion}`}
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setMedicamentos((list) => list.filter((_, j) => j !== i))
-                  }
-                  className="text-danger hover:opacity-70"
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+                <Trash2 className="size-4" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setMeds((m) => [...m, { ...EMPTY_MED }])}
+            className="inline-flex w-fit items-center gap-1 text-xs font-medium text-teal hover:text-teal-700"
+          >
+            <Plus className="size-3.5" />
+            Agregar medicamento
+          </button>
+        </div>
+        <Field label="Indicaciones de la fórmula (opcional)">
+          <textarea
+            className={textareaClass}
+            rows={2}
+            value={formulaIndicaciones}
+            onChange={(e) => setFormulaIndicaciones(e.target.value)}
+            placeholder="Indicaciones para el paciente sobre los medicamentos…"
+          />
+        </Field>
+        <p className="text-xs text-muted">
+          Si no receta medicamentos, deje esta sección vacía: no se emitirá
+          ninguna fórmula.
+        </p>
       </Card>
 
-      {/* Adjuntar resultados — solo UI (HU-07) */}
+      {/* Resultados adjuntos (HU-07): se guardan al finalizar la consulta */}
       <Card className="flex flex-col gap-5 p-6">
         <SectionTitle
           icon={Paperclip}
           title="Resultados adjuntos"
-          hint="El almacenamiento llega con la HU-07"
+          hint="Labs, imágenes, informes"
         />
         <label className="flex cursor-pointer flex-col items-center gap-2 rounded-[var(--radius)] border-2 border-dashed border-line bg-field p-8 text-center transition-colors hover:border-teal hover:bg-teal/5">
           <Upload className="size-8 text-muted" />
@@ -568,18 +672,53 @@ function ConsultaForm() {
             type="file"
             multiple
             className="sr-only"
-            onChange={(e) =>
-              setAdjuntos(Array.from(e.target.files ?? []).map((f) => f.name))
-            }
+            onChange={(e) => {
+              const nuevos = Array.from(e.target.files ?? []).map((file) => ({
+                file,
+                nombre: file.name.replace(/\.[^.]+$/, ""),
+              }));
+              setAdjuntos((prev) => [...prev, ...nuevos]);
+              e.target.value = "";
+            }}
           />
         </label>
         {adjuntos.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {adjuntos.map((name, i) => (
-              <Badge key={i} tone="neutral">
-                <Paperclip className="mr-1 inline size-3" />
-                {name}
-              </Badge>
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-muted">
+              Ponle un nombre a cada anexo (así aparecerá en la historia clínica).
+            </p>
+            {adjuntos.map((a, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 rounded-[var(--radius)] border border-line bg-shell p-2"
+              >
+                <Paperclip className="size-4 shrink-0 text-muted" />
+                <Input
+                  value={a.nombre}
+                  onChange={(e) =>
+                    setAdjuntos((list) =>
+                      list.map((x, j) =>
+                        j === i ? { ...x, nombre: e.target.value } : x,
+                      ),
+                    )
+                  }
+                  placeholder="Nombre del anexo"
+                  className="h-9"
+                />
+                <span className="hidden max-w-[140px] shrink-0 truncate text-xs text-muted sm:block">
+                  {a.file.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAdjuntos((list) => list.filter((_, j) => j !== i))
+                  }
+                  className="flex shrink-0 items-center px-1 text-danger hover:opacity-70"
+                  title="Quitar"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
             ))}
           </div>
         )}
@@ -599,7 +738,11 @@ function ConsultaForm() {
         </Button>
         <Button type="submit" disabled={saving}>
           <Save className="size-4" />
-          {saving ? "Guardando…" : "Finalizar consulta"}
+          {saving
+            ? "Guardando…"
+            : createdId
+              ? "Continuar a la historia clínica"
+              : "Finalizar consulta"}
         </Button>
       </div>
     </form>

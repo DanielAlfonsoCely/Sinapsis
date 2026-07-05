@@ -14,6 +14,9 @@ import {
   Activity,
   CalendarClock,
   FileText,
+  Pill,
+  Paperclip,
+  ImageIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -29,6 +32,7 @@ type Paciente = {
   tipo_sangre: string | null;
   alergias: string | null;
   aseguradora: string | null;
+  tiene_cita_hoy: boolean;
 };
 
 type Consulta = {
@@ -56,6 +60,24 @@ type Consulta = {
   estado_consulta: string;
   medico_nombre: string;
   medico_especialidad: string;
+  anexos: { id: string; nombre: string; tipo: string }[];
+};
+
+type Medicamento = {
+  nombre: string;
+  dosis: string;
+  frecuencia: string;
+  duracion: string;
+  cantidad: string;
+};
+
+type Formula = {
+  id: string;
+  consulta_id: string | null;
+  medicamentos: Medicamento[];
+  indicaciones: string | null;
+  estado_formula: string;
+  fecha_prescripcion: string;
 };
 
 function initials(nombre: string, apellidos: string) {
@@ -89,11 +111,27 @@ function formatDateTime(iso: string) {
 function HistoriaClinica() {
   const searchParams = useSearchParams();
   const pacienteId = searchParams.get("paciente");
+  const consultaParam = searchParams.get("consulta"); // deep-link desde una fórmula
 
   const [paciente, setPaciente] = useState<Paciente | null>(null);
   const [consultas, setConsultas] = useState<Consulta[]>([]);
+  const [formulas, setFormulas] = useState<Formula[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Abre un anexo en una pestaña nueva (se pide con token y se muestra como blob).
+  async function verAnexo(id: string) {
+    const token = localStorage.getItem("token");
+    const res = await fetch(
+      `http://localhost:8080/api/v1/anexos/${id}/archivo`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+    );
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
 
   useEffect(() => {
     if (!pacienteId) {
@@ -105,7 +143,7 @@ function HistoriaClinica() {
       try {
         const token = localStorage.getItem("token");
         const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-        const [pRes, cRes] = await Promise.all([
+        const [pRes, cRes, fRes] = await Promise.all([
           fetch(`http://localhost:8080/api/v1/pacientes/${pacienteId}`, {
             headers,
           }),
@@ -113,13 +151,23 @@ function HistoriaClinica() {
             `http://localhost:8080/api/v1/pacientes/${pacienteId}/consultas`,
             { headers },
           ),
+          fetch(
+            `http://localhost:8080/api/v1/pacientes/${pacienteId}/formulas`,
+            { headers },
+          ),
         ]);
         if (pRes.ok) setPaciente(await pRes.json());
+        if (fRes.ok) setFormulas((await fRes.json()).formulas ?? []);
         if (cRes.ok) {
           const data = await cRes.json();
           const list: Consulta[] = data.consultas ?? [];
           setConsultas(list);
-          if (list.length > 0) setExpanded(list[0].id);
+          // Si venimos desde una fórmula, abrir esa consulta; si no, la más reciente.
+          const target =
+            consultaParam && list.some((c) => c.id === consultaParam)
+              ? consultaParam
+              : list[0]?.id ?? null;
+          setExpanded(target);
         }
       } catch {
         // se refleja como historia vacía
@@ -127,7 +175,7 @@ function HistoriaClinica() {
         setLoading(false);
       }
     })();
-  }, [pacienteId]);
+  }, [pacienteId, consultaParam]);
 
   if (!pacienteId) {
     return (
@@ -166,12 +214,23 @@ function HistoriaClinica() {
             <p className="text-sm text-slate">Registro unificado — inmutable</p>
           </div>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href={`/consulta?paciente=${pacienteId}`}>
+        {/* Solo se puede consultar con cita activa para hoy */}
+        {paciente?.tiene_cita_hoy ? (
+          <Button variant="outline" size="sm" asChild>
+            <Link href={`/consulta?paciente=${pacienteId}`}>
+              <Stethoscope className="size-4" />
+              Nueva consulta
+            </Link>
+          </Button>
+        ) : (
+          <span
+            title="Sin cita programada para hoy. Agenda una cita desde Pacientes para poder consultar."
+            className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-[var(--radius)] border border-line bg-field px-3 py-1.5 text-sm font-medium text-muted"
+          >
             <Stethoscope className="size-4" />
             Nueva consulta
-          </Link>
-        </Button>
+          </span>
+        )}
       </div>
 
       {/* Banner paciente */}
@@ -351,6 +410,68 @@ function HistoriaClinica() {
                           Próxima cita: {formatDate(c.proxima_cita)}
                         </p>
                       )}
+
+                      {/* Anexos: no se muestran inline; se abren con un botón */}
+                      {c.anexos.length > 0 && (
+                        <div>
+                          <p className="mb-1.5 flex items-center gap-1 text-xs uppercase tracking-[0.6px] text-label">
+                            <Paperclip className="size-3" />
+                            Anexos ({c.anexos.length})
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {c.anexos.map((a) => (
+                              <button
+                                key={a.id}
+                                type="button"
+                                onClick={() => verAnexo(a.id)}
+                                className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-teal/30 bg-teal/5 px-3 py-1.5 text-xs font-medium text-teal hover:bg-teal/10"
+                              >
+                                {a.tipo === "imagen" ? (
+                                  <ImageIcon className="size-3.5" />
+                                ) : (
+                                  <FileText className="size-3.5" />
+                                )}
+                                Ver {a.nombre}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Fórmulas recetadas en esta consulta */}
+                      {formulas
+                        .filter((f) => f.consulta_id === c.id)
+                        .map((f) => {
+                          const vigente = f.estado_formula === "vigente";
+                          return (
+                            <div
+                              key={f.id}
+                              className="rounded-[var(--radius)] border border-line bg-white p-3"
+                            >
+                              <div className="mb-1.5 flex items-center gap-2">
+                                <Pill className="size-3.5 text-teal" />
+                                <span className="text-xs uppercase tracking-[0.6px] text-label">
+                                  Fórmula médica
+                                </span>
+                                <Badge tone={vigente ? "success" : "neutral"}>
+                                  {vigente ? "Vigente" : "Anulada"}
+                                </Badge>
+                              </div>
+                              <ul className="flex flex-col gap-0.5">
+                                {f.medicamentos.map((m, i) => (
+                                  <li key={i} className="text-sm text-navy-800">
+                                    <span className="font-medium">
+                                      {m.nombre}
+                                    </span>
+                                    {m.dosis && ` · ${m.dosis}`}
+                                    {m.frecuencia && ` · ${m.frecuencia}`}
+                                    {m.duracion && ` · ${m.duracion}`}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          );
+                        })}
                     </div>
                   )}
                 </Card>

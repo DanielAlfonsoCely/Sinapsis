@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,11 @@ func main() {
 	}
 	defer pool.Close()
 	log.Println("database connected successfully")
+
+	// Carpeta para anexos (HU-07); persiste en el volumen 'uploads'.
+	if err := os.MkdirAll(cfg.UploadsDir, 0o755); err != nil {
+		log.Fatalf("no se pudo crear el directorio de uploads: %v", err)
+	}
 
 	r := gin.Default()
 
