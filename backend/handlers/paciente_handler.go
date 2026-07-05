@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,9 +29,9 @@ func NewPacienteHandler(pool *pgxpool.Pool) *PacienteHandler {
 }
 
 // List maneja GET /api/v1/pacientes?q=texto
-// q es opcional: filtra por nombre, apellidos o número de documento.
-// Solo devuelve los pacientes cuyo médico tratante es el médico autenticado
-// (Opción A: cada médico ve únicamente sus pacientes).
+// Si el médico es de triage (especialidad contiene "triage"), ve TODOS los
+// pacientes de su entidad. Si no, ve solo sus propios pacientes y los que
+// tienen cita con él (especialista vía remisión).
 func (h *PacienteHandler) List(c *gin.Context) {
 	q := c.Query("q")
 
@@ -45,10 +46,11 @@ func (h *PacienteHandler) List(c *gin.Context) {
 		return
 	}
 
-	var medicoID uuid.UUID
+	var medicoID, entidadID uuid.UUID
+	var especialidad string
 	err = h.pool.QueryRow(context.Background(),
-		`SELECT id FROM medico WHERE usuario_id = $1`, userID,
-	).Scan(&medicoID)
+		`SELECT id, entidad_id, especialidad FROM medico WHERE usuario_id = $1`, userID,
+	).Scan(&medicoID, &entidadID, &especialidad)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede listar pacientes"})
@@ -59,8 +61,10 @@ func (h *PacienteHandler) List(c *gin.Context) {
 		return
 	}
 
-	// Un médico ve: sus pacientes propios (es tratante) y los temporales que le
-	// agendaron cita (como especialista, vía remisión).
+	// Detectar si es médico de triage (lógica de negocio en Go, no en DB).
+	esTriage := strings.Contains(strings.ToLower(especialidad), "triage") ||
+		strings.Contains(strings.ToLower(especialidad), "triagge")
+
 	rows, err := h.pool.Query(
 		context.Background(),
 		`SELECT p.id, p.numero_documento, p.tipo_documento, p.nombre_paciente, p.apellidos_paciente,
@@ -75,14 +79,20 @@ func (h *PacienteHandler) List(c *gin.Context) {
 		        p.estado
 		 FROM paciente p
 		 JOIN historia_clinica hc ON hc.paciente_id = p.id
-		 WHERE (hc.medico_tratante_id = $1
-		        OR EXISTS (SELECT 1 FROM cita ci2 WHERE ci2.paciente_id = p.id AND ci2.medico_id = $1))
+		 WHERE (
+		   ($3 = true AND hc.entidad_id = $4)
+		   OR
+		   ($3 = false AND (
+		     hc.medico_tratante_id = $1
+		     OR EXISTS (SELECT 1 FROM cita ci2 WHERE ci2.paciente_id = p.id AND ci2.medico_id = $1)
+		   ))
+		 )
 		   AND ($2 = ''
 		    OR p.nombre_paciente ILIKE '%' || $2 || '%'
 		    OR p.apellidos_paciente ILIKE '%' || $2 || '%'
 		    OR p.numero_documento ILIKE '%' || $2 || '%')
 		 ORDER BY es_tratante DESC, p.nombre_paciente, p.apellidos_paciente`,
-		medicoID, q,
+		medicoID, q, esTriage, entidadID,
 	)
 	if err != nil {
 		log.Printf("list pacientes error: %v", err)
@@ -102,7 +112,6 @@ func (h *PacienteHandler) List(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read pacientes"})
 			return
 		}
-		// proxima_cita = la próxima cita futura más cercana entre sus consultas
 		pacientes = append(pacientes, p)
 	}
 
@@ -115,6 +124,7 @@ func (h *PacienteHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"pacientes": pacientes,
 		"total":     len(pacientes),
+		"es_triage": esTriage,
 	})
 }
 
@@ -399,7 +409,7 @@ func (h *PacienteHandler) MiAgenda(c *gin.Context) {
 		return
 	}
 	type autorizacion struct {
-		Especialidad string                   `json:"especialidad"`
+		Especialidad  string                  `json:"especialidad"`
 		Especialistas []models.MedicoListItem `json:"especialistas"`
 	}
 	autorizaciones := make([]autorizacion, 0)

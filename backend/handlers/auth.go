@@ -107,6 +107,25 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// Si es médico, buscar especialidad y entidad para el frontend.
+	var especialidad *string
+	var entidadNombre *string
+	if user.TipoUsuario == "medico" {
+		var esp, ent string
+		err := h.pool.QueryRow(
+			context.Background(),
+			`SELECT m.especialidad, e.nombre_entidad
+			 FROM medico m
+			 JOIN entidad e ON e.id = m.entidad_id
+			 WHERE m.usuario_id = $1`,
+			user.ID,
+		).Scan(&esp, &ent)
+		if err == nil {
+			especialidad = &esp
+			entidadNombre = &ent
+		}
+	}
+
 	claims := jwt.MapClaims{
 		"user_id":      user.ID,
 		"email":        user.Email,
@@ -130,6 +149,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			"apellidos":      user.Apellidos,
 			"email":          user.Email,
 			"tipo_usuario":   user.TipoUsuario,
+			"especialidad":   especialidad,
+			"entidad":        entidadNombre,
 		},
 	})
 }

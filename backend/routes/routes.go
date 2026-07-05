@@ -50,28 +50,23 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 			pacientes.GET("/:id/consultas", h.consulta.ListByPaciente)
 			pacientes.GET("/:id/formulas", h.formula.ListByPaciente)
 			pacientes.POST("", middleware.RequireAuth(cfg), h.paciente.Create)
-			// El médico general autoriza a su paciente una especialidad (no cambia tratante).
 			pacientes.POST("/:id/remisiones", middleware.RequireAuth(cfg), h.paciente.AutorizarEspecialidad)
 		}
 
 		api.GET("/especialidades", middleware.RequireAuth(cfg), h.paciente.ListEspecialidades)
-
-		// Agenda del paciente (su tratante, especialidades autorizadas y citas).
 		api.GET("/mi/agenda", middleware.RequireAuth(cfg), h.paciente.MiAgenda)
 
 		consultas := api.Group("/consultas")
 		{
 			consultas.POST("", middleware.RequireAuth(cfg), h.consulta.Create)
-			// Adjuntar resultados/imágenes a una consulta (HU-07).
 			consultas.POST("/:id/anexos", middleware.RequireAuth(cfg), h.anexo.Create)
 		}
 
-		// Ver el archivo de un anexo.
 		api.GET("/anexos/:id/archivo", middleware.RequireAuth(cfg), h.anexo.Serve)
 
-		// El paciente agenda sus citas (con su tratante o un especialista autorizado).
 		citas := api.Group("/citas")
 		{
+			citas.GET("/hoy", middleware.RequireAuth(cfg), h.cita.CitasHoy)
 			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
 		}
 

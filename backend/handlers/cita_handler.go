@@ -24,10 +24,102 @@ func NewCitaHandler(pool *pgxpool.Pool) *CitaHandler {
 	return &CitaHandler{pool: pool}
 }
 
+// CitasHoy maneja GET /api/v1/citas/hoy.
+// Retorna las citas del médico autenticado para el día de hoy con datos del paciente.
+func (h *CitaHandler) CitasHoy(c *gin.Context) {
+	userIDRaw, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+	userID, err := uuid.Parse(userIDRaw.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+		return
+	}
+
+	var medicoID uuid.UUID
+	err = h.pool.QueryRow(context.Background(),
+		`SELECT id FROM medico WHERE usuario_id = $1`, userID,
+	).Scan(&medicoID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede ver sus citas"})
+			return
+		}
+		log.Printf("lookup medico error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
+		return
+	}
+
+	rows, err := h.pool.Query(context.Background(),
+		`SELECT ci.id, ci.fecha_hora, ci.estado,
+		        p.id, p.nombre_paciente, p.apellidos_paciente, p.numero_documento
+		 FROM cita ci
+		 JOIN paciente p ON p.id = ci.paciente_id
+		 WHERE ci.medico_id = $1
+		   AND ci.fecha_hora::date = CURRENT_DATE
+		 ORDER BY ci.fecha_hora`,
+		medicoID,
+	)
+	if err != nil {
+		log.Printf("list citas hoy error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch citas"})
+		return
+	}
+	defer rows.Close()
+
+	type PacienteResumen struct {
+		ID                string `json:"id"`
+		NombrePaciente    string `json:"nombre_paciente"`
+		ApellidosPaciente string `json:"apellidos_paciente"`
+		NumeroDocumento   string `json:"numero_documento"`
+	}
+	type CitaItem struct {
+		ID        string          `json:"id"`
+		FechaHora time.Time       `json:"fecha_hora"`
+		Estado    string          `json:"estado"`
+		Paciente  PacienteResumen `json:"paciente"`
+	}
+
+	citas := make([]CitaItem, 0)
+	for rows.Next() {
+		var ci CitaItem
+		if err := rows.Scan(
+			&ci.ID, &ci.FechaHora, &ci.Estado,
+			&ci.Paciente.ID, &ci.Paciente.NombrePaciente, &ci.Paciente.ApellidosPaciente, &ci.Paciente.NumeroDocumento,
+		); err != nil {
+			log.Printf("scan cita error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read citas"})
+			return
+		}
+		citas = append(citas, ci)
+	}
+
+	total := len(citas)
+	completadas := 0
+	pendientes := 0
+	for _, ci := range citas {
+		if ci.Estado == "completada" {
+			completadas++
+		} else if ci.Estado == "programada" || ci.Estado == "en_curso" {
+			pendientes++
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"citas":       citas,
+		"total":       total,
+		"completadas": completadas,
+		"pendientes":  pendientes,
+	})
+}
+
 // Create maneja POST /api/v1/citas.
 // La agenda el PACIENTE autenticado. Puede agendar con:
 //   - su médico tratante (general), siempre; o
 //   - un especialista, solo si su médico general autorizó esa especialidad (remisión).
+//
 // Agendar con un especialista NO cambia el médico tratante del paciente.
 func (h *CitaHandler) Create(c *gin.Context) {
 	userIDRaw, exists := c.Get("user_id")
@@ -130,10 +222,10 @@ func (h *CitaHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":          citaID,
-		"paciente_id": pacienteID,
-		"fecha_hora":  fechaHora,
-		"es_tratante": esTratante,
+		"id":           citaID,
+		"paciente_id":  pacienteID,
+		"fecha_hora":   fechaHora,
+		"es_tratante":  esTratante,
 		"especialidad": strings.TrimSpace(especialidad),
 	})
 }
