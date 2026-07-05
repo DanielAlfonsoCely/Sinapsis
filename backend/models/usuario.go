@@ -26,6 +26,7 @@ type Usuario struct {
 	Email              string    `json:"email"`
 	Contrasena         string    `json:"-"`
 	TipoUsuario        string    `json:"tipo_usuario"`
+	Estado               bool     `json:"estado"`
 	FechaCreacion      time.Time `json:"fecha_creacion"`
 	FechaActualizacion time.Time `json:"fecha_actualizacion"`
 }
