@@ -39,19 +39,24 @@ type PacienteDetalle = {
 };
 
 function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString("es-CO", {
+  // El backend retorna timestamps sin sufijo de timezone (asumidos UTC).
+  // Añadimos "Z" para forzar interpretación UTC y mostramos en hora Colombia.
+  const utc = iso.endsWith("Z") ? iso : iso + "Z";
+  return new Date(utc).toLocaleString("es-CO", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "America/Bogota",
   });
 }
 
+
 function nowLocalForInput() {
   const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const estadoTone: Record<string, string> = {
@@ -192,7 +197,7 @@ export default function PacienteHomePage() {
         {agenda?.medico_tratante && (
           <Card className="flex flex-col gap-3 p-6">
             <h2 className="font-display font-semibold text-ink">
-              Mi médico general
+              Mi Médico general
             </h2>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">

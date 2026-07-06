@@ -71,6 +71,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
 		}
 
+		/*
 		admin := api.Group("/admin")
 		admin.Use(middleware.RequireAuth(cfg))
 		{
@@ -80,6 +81,9 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 			admin.PUT("/usuarios/:id", handlers.EditarUsuario)   // HU-20
 			admin.DELETE("/usuarios/:id", handlers.EliminarUsuario) // HU-21
 			admin.PATCH("/usuarios/:id/rol", handlers.AsignarRol) // HU-22 TO DO
+			
+		}
+		*/
 		entidades := api.Group("/entidades")
 		{
 			entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)

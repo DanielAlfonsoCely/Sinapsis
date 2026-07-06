@@ -1,4 +1,5 @@
 package handlers
+/*
 //agregar imports necesarios
 import (
     "context"
@@ -389,3 +390,4 @@ func ObtenerUsuarios(c *gin.Context) {
         "offset":   offset,
     })
 }
+*/
