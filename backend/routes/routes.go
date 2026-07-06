@@ -11,6 +11,7 @@ import (
 
 type Handler struct {
 	auth     *handlers.AuthHandler
+	usuario  *handlers.UsuarioHandler
 	paciente *handlers.PacienteHandler
 	consulta *handlers.ConsultaHandler
 	cita     *handlers.CitaHandler
@@ -22,6 +23,7 @@ type Handler struct {
 func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 	h := &Handler{
 		auth:     handlers.NewAuthHandler(pool, cfg),
+		usuario:  handlers.NewUsuarioHandler(pool),
 		paciente: handlers.NewPacienteHandler(pool),
 		consulta: handlers.NewConsultaHandler(pool),
 		cita:     handlers.NewCitaHandler(pool),
@@ -74,22 +76,22 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		admin := api.Group("/admin")
 		admin.Use(middleware.RequireAuth(cfg))
 		{
-			admin.GET("/usuarios", handlers.ObtenerUsuarios)
-			admin.GET("/usuarios/:id", handlers.ObtenerUsuario)
-			admin.POST("/usuarios", handlers.CrearUsuario)       // HU-19
-			admin.PUT("/usuarios/:id", handlers.EditarUsuario)   // HU-20
-			admin.DELETE("/usuarios/:id", handlers.EliminarUsuario) // HU-21
-			admin.PATCH("/usuarios/:id/rol", handlers.AsignarRol) // HU-22 TO DO
-		entidades := api.Group("/entidades")
-		{
-			entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)
-			entidades.POST("", middleware.RequireAuth(cfg), h.entidad.Create)
-		}
+			admin.GET("/usuarios", h.usuario.ObtenerUsuarios)
+			admin.POST("/usuarios", h.usuario.CrearUsuario)          // HU-19
+			admin.PUT("/usuarios/:id", h.usuario.EditarUsuario)      // HU-20
+			admin.DELETE("/usuarios/:id", h.usuario.EliminarUsuario) // HU-21
+			admin.PATCH("/usuarios/:id/rol", h.usuario.AsignarRol)   // HU-22 TO DO
+			entidades := api.Group("/entidades")
+			{
+				entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)
+				entidades.POST("", middleware.RequireAuth(cfg), h.entidad.Create)
+			}
 
-		formulas := api.Group("/formulas")
-		{
-			formulas.POST("", middleware.RequireAuth(cfg), h.formula.Create)
-			formulas.POST("/:id/anular", middleware.RequireAuth(cfg), h.formula.Anular)
+			formulas := api.Group("/formulas")
+			{
+				formulas.POST("", middleware.RequireAuth(cfg), h.formula.Create)
+				formulas.POST("/:id/anular", middleware.RequireAuth(cfg), h.formula.Anular)
+			}
 		}
 	}
 }

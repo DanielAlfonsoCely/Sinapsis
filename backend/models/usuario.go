@@ -19,6 +19,18 @@ type LoginRequest struct {
 	Contrasena string `json:"contrasena" binding:"required"`
 }
 
+type UpdateUserRequest struct {
+	NombreUsuario *string `json:"nombre_usuario"`
+	Apellidos     *string `json:"apellidos"`
+	Email         *string `json:"email" binding:"omitempty,email"`
+	TipoUsuario   *string `json:"tipo_usuario" binding:"omitempty,oneof=medico paciente admin_entidad admin_plataforma"`
+	Estado        *bool   `json:"estado"`
+}
+
+type RoleRequest struct {
+	TipoUsuario string `json:"tipo_usuario" binding:"required,oneof=medico paciente admin_entidad admin_plataforma"`
+}
+
 type Usuario struct {
 	ID                 uuid.UUID `json:"id"`
 	NombreUsuario      string    `json:"nombre_usuario"`
@@ -26,7 +38,7 @@ type Usuario struct {
 	Email              string    `json:"email"`
 	Contrasena         string    `json:"-"`
 	TipoUsuario        string    `json:"tipo_usuario"`
-	Estado               bool     `json:"estado"`
+	Estado             bool      `json:"estado"`
 	FechaCreacion      time.Time `json:"fecha_creacion"`
 	FechaActualizacion time.Time `json:"fecha_actualizacion"`
 }
