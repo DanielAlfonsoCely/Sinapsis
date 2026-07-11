@@ -66,11 +66,11 @@ function Formulas() {
   }, [pacienteId]);
 
   useEffect(() => {
-    if (!pacienteId) {
-      setLoading(false);
-      return;
-    }
     (async () => {
+      if (!pacienteId) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const t = token();

@@ -54,17 +54,19 @@ export default function DashboardPage() {
   });
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("usuario");
-      if (raw) {
-        const u = JSON.parse(raw);
-        setNombreMedico(u.apellidos ?? "");
-        const esp: string = u.especialidad ?? "";
-        setEsTriage(
-          esp.toLowerCase().includes("triage") || esp.toLowerCase().includes("triagge")
-        );
-      }
-    } catch {}
+    void (async () => {
+      try {
+        const raw = localStorage.getItem("usuario");
+        if (raw) {
+          const u = JSON.parse(raw);
+          setNombreMedico(u.apellidos ?? "");
+          const esp: string = u.especialidad ?? "";
+          setEsTriage(
+            esp.toLowerCase().includes("triage") || esp.toLowerCase().includes("triagge")
+          );
+        }
+      } catch {}
+    })();
   }, []);
 
   useEffect(() => {

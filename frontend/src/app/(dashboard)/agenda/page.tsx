@@ -114,7 +114,9 @@ export default function AgendaPage() {
   }, []);
 
   useEffect(() => {
-    fetchCitas(refDate);
+    (async () => {
+      await fetchCitas(refDate);
+    })();
   }, [refDate, fetchCitas]);
 
   // Días de la semana visible (lunes a viernes, hora local)
