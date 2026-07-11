@@ -17,6 +17,8 @@ import {
   Pill,
   Paperclip,
   ImageIcon,
+  FileDown,
+  Loader2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -118,6 +120,8 @@ function HistoriaClinica() {
   const [formulas, setFormulas] = useState<Formula[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   // Abre un anexo en una pestaña nueva (se pide con token y se muestra como blob).
   async function verAnexo(id: string) {
@@ -133,12 +137,50 @@ function HistoriaClinica() {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 
-  useEffect(() => {
-    if (!pacienteId) {
-      setLoading(false);
-      return;
+  async function exportarPDF() {
+    if (!pacienteId) return;
+    setPdfLoading(true);
+    setPdfError(null);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `http://localhost:8080/api/v1/pacientes/${pacienteId}/historia-clinica/pdf`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      if (res.status === 403) {
+        setPdfError("No tienes permisos para exportar esta historia clínica.");
+        return;
+      }
+      if (res.status === 404) {
+        setPdfError("Este paciente no tiene historia clínica registrada.");
+        return;
+      }
+      if (!res.ok) {
+        setPdfError("No se pudo generar el PDF. Intenta de nuevo.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const cd = res.headers.get("Content-Disposition") ?? "";
+      const match = cd.match(/filename="?([^";\s]+)"?/);
+      a.download = match?.[1] ?? "historia_clinica.pdf";
+      a.href = url;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setPdfError("Error de red. Intenta de nuevo.");
+    } finally {
+      setPdfLoading(false);
     }
+  }
+
+  useEffect(() => {
     (async () => {
+      if (!pacienteId) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const token = localStorage.getItem("token");
@@ -215,23 +257,39 @@ function HistoriaClinica() {
           </div>
         </div>
         {/* Solo se puede consultar con cita activa para hoy */}
-        {paciente?.tiene_cita_hoy ? (
-          <Button variant="outline" size="sm" asChild>
-            <Link href={`/consulta?paciente=${pacienteId}`}>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportarPDF}
+            disabled={pdfLoading}
+          >
+            {pdfLoading
+              ? <Loader2 className="size-4 animate-spin" />
+              : <FileDown className="size-4" />}
+            {pdfLoading ? "Generando…" : "Exportar PDF"}
+          </Button>
+          {paciente?.tiene_cita_hoy ? (
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/consulta?paciente=${pacienteId}`}>
+                <Stethoscope className="size-4" />
+                Nueva consulta
+              </Link>
+            </Button>
+          ) : (
+            <span
+              title="Sin cita programada para hoy. Agenda una cita desde Pacientes para poder consultar."
+              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-[var(--radius)] border border-line bg-field px-3 py-1.5 text-sm font-medium text-muted"
+            >
               <Stethoscope className="size-4" />
               Nueva consulta
-            </Link>
-          </Button>
-        ) : (
-          <span
-            title="Sin cita programada para hoy. Agenda una cita desde Pacientes para poder consultar."
-            className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-[var(--radius)] border border-line bg-field px-3 py-1.5 text-sm font-medium text-muted"
-          >
-            <Stethoscope className="size-4" />
-            Nueva consulta
-          </span>
-        )}
+            </span>
+          )}
+        </div>
       </div>
+      {pdfError && (
+        <p className="mt-1 text-xs text-danger">{pdfError}</p>
+      )}
 
       {/* Banner paciente */}
       {paciente && (

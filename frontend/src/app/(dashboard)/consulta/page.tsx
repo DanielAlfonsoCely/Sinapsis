@@ -114,11 +114,11 @@ function ConsultaForm() {
   const [createdId, setCreatedId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!pacienteId) {
-      setLoadingPaciente(false);
-      return;
-    }
     (async () => {
+      if (!pacienteId) {
+        setLoadingPaciente(false);
+        return;
+      }
       try {
         const token = localStorage.getItem("token");
         const res = await fetch(
