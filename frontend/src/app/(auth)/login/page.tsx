@@ -44,7 +44,9 @@ export default function LoginPage() {
         router.push("/dashboard");
       } else if (tipo === "paciente") {
         router.push("/paciente");
-      } else if (tipo === "admin_entidad" || tipo === "admin_plataforma") {
+      } else if (tipo === "admin_plataforma") {
+        router.push("/admin/dashboard_admin");
+      } else if (tipo === "admin_entidad") {
         setError("El panel de administración estará disponible próximamente.");
       } else {
         setError("Rol no soportado en esta versión de la plataforma.");
