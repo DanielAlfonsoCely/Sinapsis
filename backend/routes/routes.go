@@ -10,14 +10,15 @@ import (
 )
 
 type Handler struct {
-	auth            *handlers.AuthHandler
-	paciente        *handlers.PacienteHandler
-	consulta        *handlers.ConsultaHandler
-	cita            *handlers.CitaHandler
-	entidad         *handlers.EntidadHandler
-	formula         *handlers.FormulaHandler
-	anexo           *handlers.AnexoHandler
+	auth               *handlers.AuthHandler
+	paciente           *handlers.PacienteHandler
+	consulta           *handlers.ConsultaHandler
+	cita               *handlers.CitaHandler
+	entidad            *handlers.EntidadHandler
+	formula            *handlers.FormulaHandler
+	anexo              *handlers.AnexoHandler
 	historiaClinicaPDF *handlers.HistoriaClinicaPDFHandler
+	adminUsuario       *handlers.AdminUsuarioHandler
 }
 
 func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
@@ -30,6 +31,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		formula:            handlers.NewFormulaHandler(pool),
 		anexo:              handlers.NewAnexoHandler(pool, cfg.UploadsDir),
 		historiaClinicaPDF: handlers.NewHistoriaClinicaPDFHandler(pool),
+		adminUsuario:       handlers.NewAdminUsuarioHandler(pool),
 	}
 
 	r.GET("/health", func(c *gin.Context) {
@@ -74,19 +76,13 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
 		}
 
-		/*
 		admin := api.Group("/admin")
-		admin.Use(middleware.RequireAuth(cfg))
+		admin.Use(middleware.RequireAuth(cfg), middleware.RequireAdmin(cfg))
 		{
-			admin.GET("/usuarios", handlers.ObtenerUsuarios)
-			admin.GET("/usuarios/:id", handlers.ObtenerUsuario)
-			admin.POST("/usuarios", handlers.CrearUsuario)       // HU-19
-			admin.PUT("/usuarios/:id", handlers.EditarUsuario)   // HU-20
-			admin.DELETE("/usuarios/:id", handlers.EliminarUsuario) // HU-21
-			admin.PATCH("/usuarios/:id/rol", handlers.AsignarRol) // HU-22 TO DO
-			
+			admin.GET("/usuarios", h.adminUsuario.ListUsuarios)
+			admin.PATCH("/usuarios/:id/rol", h.adminUsuario.PatchRol)
 		}
-		*/
+
 		entidades := api.Group("/entidades")
 		{
 			entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)
