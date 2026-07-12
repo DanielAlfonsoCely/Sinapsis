@@ -81,6 +81,9 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		{
 			admin.GET("/usuarios", h.adminUsuario.ListUsuarios)
 			admin.PATCH("/usuarios/:id/rol", h.adminUsuario.PatchRol)
+			admin.GET("/entidades", h.entidad.ListAdmin)
+			admin.GET("/entidades/:id", h.entidad.GetByIDAdmin)
+			admin.GET("/stats", h.entidad.Stats)
 		}
 
 		entidades := api.Group("/entidades")
