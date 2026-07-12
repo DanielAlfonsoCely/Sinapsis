@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sinapsis-backend/models"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,11 +20,51 @@ import (
 	"github.com/johnfercher/maroto/v2/pkg/components/text"
 	"github.com/johnfercher/maroto/v2/pkg/config"
 	"github.com/johnfercher/maroto/v2/pkg/consts/align"
+	"github.com/johnfercher/maroto/v2/pkg/consts/border"
 	"github.com/johnfercher/maroto/v2/pkg/consts/fontstyle"
+	"github.com/johnfercher/maroto/v2/pkg/core"
 	"github.com/johnfercher/maroto/v2/pkg/props"
-
-	"sinapsis-backend/models"
 )
+
+// --- Visual style constants ---
+
+var (
+	// colorNavy es el fondo de los encabezados de sección (Sinapsis navy #1E2A4A)
+	colorNavy = &props.Color{Red: 30, Green: 42, Blue: 74}
+	// colorGray es el fondo de filas de médico y encabezados de tabla
+	colorGray = &props.Color{Red: 243, Green: 244, Blue: 246}
+	// colorRed es el fondo de la etiqueta ANULADA
+	colorRed = &props.Color{Red: 254, Green: 226, Blue: 226}
+	// colorWhite para texto sobre fondo oscuro
+	colorWhite = &props.Color{Red: 255, Green: 255, Blue: 255}
+)
+
+// borderFull aplica borde completo a una celda
+var borderFull = &props.Cell{BorderType: border.Full}
+
+// sectionHeaderStyle devuelve el estilo de celda para encabezados de sección (fondo navy)
+func sectionHeaderCell() *props.Cell {
+	return &props.Cell{
+		BorderType:      border.Full,
+		BackgroundColor: colorNavy,
+	}
+}
+
+// tableHeaderCell devuelve el estilo de celda para encabezados de tabla (fondo gris claro)
+func tableHeaderCell() *props.Cell {
+	return &props.Cell{
+		BorderType:      border.Full,
+		BackgroundColor: colorGray,
+	}
+}
+
+// medicoInfoCell devuelve el estilo de celda para la fila de información del médico
+func medicoInfoCell() *props.Cell {
+	return &props.Cell{
+		BorderType:      border.Full,
+		BackgroundColor: colorGray,
+	}
+}
 
 // HistoriaClinicaPDFHandler genera y entrega la historia clínica completa
 // de un paciente como archivo PDF descargable.
@@ -38,42 +79,28 @@ func NewHistoriaClinicaPDFHandler(pool *pgxpool.Pool) *HistoriaClinicaPDFHandler
 
 // --- Internal data structures ---
 
-// pdfPacienteData contiene todos los datos necesarios para renderizar el PDF.
-// Una vez poblado, no se realizan más llamadas a la base de datos.
 type pdfPacienteData struct {
-	// Identificación del paciente
-	NombrePaciente   string
+	NombrePaciente    string
 	ApellidosPaciente string
-	TipoDocumento    string
-	NumeroDocumento  string
-	FechaNacimiento  time.Time
-	Sexo             *string
-	TipoSangre       *string
-	Aseguradora      *string
-	NumeroAfiliacion *string
-
-	// Entidad médica
-	NombreEntidad string
-
-	// Marca de tiempo de generación (en America/Bogota)
-	GeneradoEn time.Time
-
-	// Datos clínicos
-	Consultas []pdfConsultaData
-
-	// Fórmulas y anexos no ligados a ninguna consulta
+	TipoDocumento     string
+	NumeroDocumento   string
+	FechaNacimiento   time.Time
+	Sexo              *string
+	TipoSangre        *string
+	Aseguradora       *string
+	NumeroAfiliacion  *string
+	NombreEntidad     string
+	GeneradoEn        time.Time
+	Consultas         []pdfConsultaData
 	FormulasHuerfanas []pdfFormulaData
 	AnexosHuerfanos   []pdfAnexoData
 }
 
-// pdfConsultaData contiene los datos de una consulta médica para el PDF.
 type pdfConsultaData struct {
-	ID             string
-	FechaConsulta  time.Time
-	TipoConsulta   *string
-	MotivoConsulta string
-
-	// Campos clínicos opcionales (nil = omitir en el PDF)
+	ID                      string
+	FechaConsulta           time.Time
+	TipoConsulta            *string
+	MotivoConsulta          string
 	Anamnesis               *string
 	RevisionSistemas        *string
 	ExamenFisico            *string
@@ -90,33 +117,25 @@ type pdfConsultaData struct {
 	PlanManejo              *string
 	ProcedimientosIndicados *string
 	ObservacionesMedico     *string
-
-	// Médico que realizó la consulta
-	MedicoNombreCompleto string
-	MedicoEspecialidad   string
-
-	// Registros asociados
-	Formulas []pdfFormulaData
-	Anexos   []pdfAnexoData
+	MedicoNombreCompleto    string
+	MedicoEspecialidad      string
+	Formulas                []pdfFormulaData
+	Anexos                  []pdfAnexoData
 }
 
-// pdfFormulaData contiene los datos de una fórmula médica para el PDF.
 type pdfFormulaData struct {
 	ID                string
 	Medicamentos      []models.Medicamento
 	Indicaciones      *string
 	FechaPrescripcion time.Time
-	EstadoFormula     string // "vigente" | "anulada"
+	EstadoFormula     string
 }
 
-// pdfAnexoData contiene los datos de un anexo para el PDF.
 type pdfAnexoData struct {
 	TipoExamen  string
 	Descripcion *string
 	FechaCarga  time.Time
 }
-
-// --- Raw row types (used during DB scanning) ---
 
 type rawFormulaRow struct {
 	ID                uuid.UUID
@@ -136,32 +155,22 @@ type rawAnexoRow struct {
 
 // --- Helper functions ---
 
-// formatBogota formatea un time.Time en la zona horaria America/Bogota
-// con el formato DD/MM/YYYY HH:mm requerido por el requisito 2.8.
 func formatBogota(t time.Time) string {
 	loc, err := time.LoadLocation("America/Bogota")
 	if err != nil {
-		// Si la zona horaria no está disponible, usar UTC como fallback seguro
 		loc = time.UTC
 	}
 	return t.In(loc).Format("02/01/2006 15:04")
 }
 
-// buildFilename construye el nombre del archivo PDF con el formato:
-// historia_clinica_<numero_documento>_<YYYYMMDD>.pdf
-// donde la fecha está en la zona horaria America/Bogota (requisito 3.1).
 func buildFilename(doc string, t time.Time) string {
 	loc, err := time.LoadLocation("America/Bogota")
 	if err != nil {
 		loc = time.UTC
 	}
-	dateStr := t.In(loc).Format("20060102")
-	return fmt.Sprintf("historia_clinica_%s_%s.pdf", doc, dateStr)
+	return fmt.Sprintf("historia_clinica_%s_%s.pdf", doc, t.In(loc).Format("20060102"))
 }
 
-// buildPDFData ensambla el struct pdfPacienteData completo a partir de los datos
-// crudos leídos de la base de datos, asignando fórmulas y anexos a sus consultas
-// o a las listas huérfanas según corresponda.
 func buildPDFData(
 	nombre, apellidos, tipoDoc, numDoc string,
 	fechaNac time.Time,
@@ -172,7 +181,6 @@ func buildPDFData(
 	formulas []rawFormulaRow,
 	anexos []rawAnexoRow,
 ) (pdfPacienteData, error) {
-	// Mapa de consulta UUID string → índice en el slice de consultas
 	consultaIdx := make(map[string]int, len(consultas))
 	for i, c := range consultas {
 		consultaIdx[c.ID] = i
@@ -192,33 +200,25 @@ func buildPDFData(
 			EstadoFormula:     f.EstadoFormula,
 		}
 		if f.ConsultaID != nil {
-			key := f.ConsultaID.String()
-			if idx, ok := consultaIdx[key]; ok {
+			if idx, ok := consultaIdx[f.ConsultaID.String()]; ok {
 				consultas[idx].Formulas = append(consultas[idx].Formulas, fd)
 				continue
 			}
 		}
-		// consulta_id nulo o consulta no encontrada → huérfana
 		formulasHuerfanas = append(formulasHuerfanas, fd)
 	}
 
 	var anexosHuerfanos []pdfAnexoData
 	for _, a := range anexos {
-		ad := pdfAnexoData{
-			TipoExamen:  a.TipoExamen,
-			Descripcion: a.Descripcion,
-			FechaCarga:  a.FechaCarga,
-		}
+		ad := pdfAnexoData{TipoExamen: a.TipoExamen, Descripcion: a.Descripcion, FechaCarga: a.FechaCarga}
 		if a.ConsultaID != nil {
-			key := a.ConsultaID.String()
-			if idx, ok := consultaIdx[key]; ok {
+			if idx, ok := consultaIdx[a.ConsultaID.String()]; ok {
 				consultas[idx].Anexos = append(consultas[idx].Anexos, ad)
 				continue
 			}
 		}
 		anexosHuerfanos = append(anexosHuerfanos, ad)
 	}
-
 	if formulasHuerfanas == nil {
 		formulasHuerfanas = []pdfFormulaData{}
 	}
@@ -244,9 +244,159 @@ func buildPDFData(
 	}, nil
 }
 
-// renderPDF genera los bytes del PDF a partir del struct pdfPacienteData.
+// addSectionHeader agrega una fila de encabezado de sección con fondo navy y texto blanco en negrita.
+func addSectionHeader(m core.Maroto, title string) {
+	m.AddRows(
+		row.New(8).Add(
+			text.NewCol(12, title, props.Text{
+				Size:  10,
+				Style: fontstyle.Bold,
+				Align: align.Left,
+				Top:   2,
+				Color: colorWhite,
+			}),
+		).WithStyle(sectionHeaderCell()),
+	)
+}
+
+// addFieldRow agrega una fila de campo con etiqueta en negrita y valor, ambos con borde completo.
+// La altura de la fila se adapta dinámicamente al largo del texto del valor para evitar
+// superposición cuando el contenido ocupa más de una línea.
+func addFieldRow(m core.Maroto, label, value string) {
+	m.AddRows(
+		row.New(calcFieldRowHeight(value, 8)).Add(
+			text.NewCol(4, label, props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+			text.NewCol(8, value, props.Text{Size: 8, Top: 1}),
+		).WithStyle(borderFull),
+	)
+}
+
+// calcFieldRowHeight calcula la altura mínima (en mm) que necesita una fila de campo.
+//
+// IMPORTANTE: gofpdf ignora los saltos de línea — los aplana como espacios.
+// Por eso se normaliza el texto a una sola línea antes de calcular el wrap real.
+//
+// Calibración Helvetica 8pt en A4 (márgenes 10mm):
+//   - Columna valor (8/12 de 190mm) ≈ 127mm
+//   - Ancho promedio por carácter ≈ 1.40mm
+//   - Altura de línea ≈ 3.5mm
+//   - Padding de celda = 2mm
+func calcFieldRowHeight(value string, fontSize float64) float64 {
+	usableColWidthMM := 127.0
+	charWidthMM := 1.40
+	lineHeightMM := 3.5
+	paddingMM := 2.0
+	minHeightMM := 6.0
+
+	_ = fontSize
+
+	if value == "" {
+		return minHeightMM
+	}
+
+	// gofpdf aplana los saltos de línea: usamos el texto plano para calcular
+	// cuántas líneas de word-wrap genera realmente el motor PDF.
+	flat := flattenNewlines(value)
+	segLen := len([]rune(flat))
+	if segLen == 0 {
+		return minHeightMM
+	}
+
+	charsPerLine := int(usableColWidthMM / charWidthMM)
+	if charsPerLine < 1 {
+		charsPerLine = 1
+	}
+
+	lines := (segLen + charsPerLine - 1) / charsPerLine
+	if lines < 1 {
+		lines = 1
+	}
+
+	height := float64(lines)*lineHeightMM + paddingMM
+	if height < minHeightMM {
+		height = minHeightMM
+	}
+	return height
+}
+
+// flattenNewlines reemplaza \r\n y \n por un espacio, imitando el comportamiento
+// de gofpdf al renderizar texto (los saltos de línea se ignoran en celdas).
+func flattenNewlines(s string) string {
+	result := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\r' && i+1 < len(s) && s[i+1] == '\n' {
+			result = append(result, ' ')
+			i++
+		} else if s[i] == '\n' {
+			result = append(result, ' ')
+		} else {
+			result = append(result, s[i])
+		}
+	}
+	return string(result)
+}
+
+// addMedsTableHeader agrega la fila de encabezado de la tabla de medicamentos.
+func addMedsTableHeader(m core.Maroto) {
+	m.AddRows(
+		row.New(5).Add(
+			text.NewCol(4, "Medicamento", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+			text.NewCol(2, "Dosis", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+			text.NewCol(3, "Frecuencia", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+			text.NewCol(3, "Duración", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+		).WithStyle(tableHeaderCell()),
+	)
+}
+
+// addAnexosTableHeader agrega la fila de encabezado de la tabla de anexos.
+func addAnexosTableHeader(m core.Maroto) {
+	m.AddRows(
+		row.New(5).Add(
+			text.NewCol(3, "Tipo de examen", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+			text.NewCol(6, "Descripción", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+			text.NewCol(3, "Fecha de carga", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+		).WithStyle(tableHeaderCell()),
+	)
+}
+
+// addFormulaBlock renderiza una fórmula como bloque visual con borde.
+func addFormulaBlock(m core.Maroto, formula pdfFormulaData) {
+	// Encabezado de fórmula con fecha
+	titulo := fmt.Sprintf("Fórmula — %s", formatBogota(formula.FechaPrescripcion))
+	formulaHeaderStyle := &props.Cell{BorderType: border.Full, BackgroundColor: colorGray}
+	if formula.EstadoFormula == "anulada" {
+		formulaHeaderStyle = &props.Cell{BorderType: border.Full, BackgroundColor: colorRed}
+		titulo += "  ★ ANULADA"
+	}
+	m.AddRows(
+		row.New(6).Add(
+			text.NewCol(12, titulo, props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+		).WithStyle(formulaHeaderStyle),
+	)
+
+	// Tabla de medicamentos
+	if len(formula.Medicamentos) > 0 {
+		addMedsTableHeader(m)
+		for _, med := range formula.Medicamentos {
+			rowH := calcFieldRowHeight(med.Nombre, 8)
+			m.AddRows(
+				row.New(rowH).Add(
+					text.NewCol(4, med.Nombre, props.Text{Size: 8, Top: 1}),
+					text.NewCol(2, med.Dosis, props.Text{Size: 8, Top: 1}),
+					text.NewCol(3, med.Frecuencia, props.Text{Size: 8, Top: 1}),
+					text.NewCol(3, med.Duracion, props.Text{Size: 8, Top: 1}),
+				).WithStyle(borderFull),
+			)
+		}
+	}
+
+	if formula.Indicaciones != nil {
+		addFieldRow(m, "Indicaciones:", *formula.Indicaciones)
+	}
+}
+
+// renderPDF genera los bytes del PDF con layout de bloques bordeados.
 func renderPDF(data pdfPacienteData) ([]byte, error) {
-	// Configurar maroto con page numbering en el footer
 	cfg := config.NewBuilder().
 		WithPageNumber(props.PageNumber{
 			Pattern: "Página {current} de {total}",
@@ -256,383 +406,236 @@ func renderPDF(data pdfPacienteData) ([]byte, error) {
 
 	m := maroto.New(cfg)
 
-	// --- Cover Page ---
-	m.AddRow(15, text.NewCol(12, "Historia Clínica — Sinapsis", props.Text{
-		Size:  16,
-		Style: fontstyle.Bold,
-		Align: align.Center,
-		Top:   5,
-	}))
-
 	nombreCompleto := data.NombrePaciente + " " + data.ApellidosPaciente
-	m.AddRow(10, text.NewCol(12, nombreCompleto, props.Text{
-		Size:  14,
-		Style: fontstyle.Bold,
-		Align: align.Center,
-	}))
 
-	m.AddRow(6, text.NewCol(12, fmt.Sprintf("%s — %s", data.TipoDocumento, data.NumeroDocumento), props.Text{
-		Size:  11,
-		Align: align.Center,
-	}))
+	// === PORTADA ===
+	m.AddRows(
+		row.New(16).Add(
+			text.NewCol(12, "SINAPSIS — Historia Clínica", props.Text{
+				Size:  16,
+				Style: fontstyle.Bold,
+				Align: align.Center,
+				Top:   5,
+				Color: colorWhite,
+			}),
+		).WithStyle(sectionHeaderCell()),
+	)
+	m.AddRows(
+		row.New(8).Add(
+			text.NewCol(12, nombreCompleto, props.Text{Size: 13, Style: fontstyle.Bold, Align: align.Center, Top: 2}),
+		).WithStyle(borderFull),
+	)
+	m.AddRows(
+		row.New(6).Add(
+			text.NewCol(4, "Documento:", props.Text{Size: 9, Style: fontstyle.Bold, Align: align.Right, Top: 1}),
+			text.NewCol(8, fmt.Sprintf("%s  %s", data.TipoDocumento, data.NumeroDocumento), props.Text{Size: 9, Top: 1}),
+		).WithStyle(borderFull),
+	)
+	m.AddRows(
+		row.New(6).Add(
+			text.NewCol(4, "Entidad:", props.Text{Size: 9, Style: fontstyle.Bold, Align: align.Right, Top: 1}),
+			text.NewCol(8, data.NombreEntidad, props.Text{Size: 9, Top: 1}),
+		).WithStyle(borderFull),
+	)
+	m.AddRows(
+		row.New(6).Add(
+			text.NewCol(4, "Generado:", props.Text{Size: 9, Style: fontstyle.Bold, Align: align.Right, Top: 1}),
+			text.NewCol(8, formatBogota(data.GeneradoEn), props.Text{Size: 9, Top: 1}),
+		).WithStyle(borderFull),
+	)
 
-	m.AddRow(6, text.NewCol(12, data.NombreEntidad, props.Text{
-		Size:  11,
-		Align: align.Center,
-	}))
+	// Separador visual
+	m.AddRow(6)
 
-	m.AddRow(8, text.NewCol(12, fmt.Sprintf("Generado: %s", formatBogota(data.GeneradoEn)), props.Text{
-		Size:  10,
-		Align: align.Center,
-		Top:   2,
-	}))
-
-	// Espacio antes de la sección de datos del paciente
-	m.AddRow(10)
-
-	// --- Patient Data Section ---
-	m.AddRow(8, text.NewCol(12, "Datos del Paciente", props.Text{
-		Size:  12,
-		Style: fontstyle.Bold,
-		Top:   3,
-	}))
-
-	// Renderizar campos no nulos en tabla simple
+	// === DATOS DEL PACIENTE ===
+	addSectionHeader(m, "DATOS DEL PACIENTE")
 	if data.FechaNacimiento.Year() > 1 {
-		m.AddRow(5, 
-			text.NewCol(4, "Fecha de Nacimiento:", props.Text{Size: 9, Style: fontstyle.Bold}),
-			text.NewCol(8, formatBogota(data.FechaNacimiento), props.Text{Size: 9}),
-		)
+		addFieldRow(m, "Fecha de nacimiento:", data.FechaNacimiento.Format("02/01/2006"))
 	}
 	if data.Sexo != nil {
-		m.AddRow(5,
-			text.NewCol(4, "Sexo:", props.Text{Size: 9, Style: fontstyle.Bold}),
-			text.NewCol(8, *data.Sexo, props.Text{Size: 9}),
-		)
+		addFieldRow(m, "Sexo:", *data.Sexo)
 	}
 	if data.TipoSangre != nil {
-		m.AddRow(5,
-			text.NewCol(4, "Tipo de Sangre:", props.Text{Size: 9, Style: fontstyle.Bold}),
-			text.NewCol(8, *data.TipoSangre, props.Text{Size: 9}),
-		)
+		addFieldRow(m, "Tipo de sangre:", *data.TipoSangre)
 	}
 	if data.Aseguradora != nil {
-		m.AddRow(5,
-			text.NewCol(4, "Aseguradora:", props.Text{Size: 9, Style: fontstyle.Bold}),
-			text.NewCol(8, *data.Aseguradora, props.Text{Size: 9}),
-		)
+		addFieldRow(m, "Aseguradora:", *data.Aseguradora)
 	}
 	if data.NumeroAfiliacion != nil {
-		m.AddRow(5,
-			text.NewCol(4, "Número de Afiliación:", props.Text{Size: 9, Style: fontstyle.Bold}),
-			text.NewCol(8, *data.NumeroAfiliacion, props.Text{Size: 9}),
-		)
+		addFieldRow(m, "Número de afiliación:", *data.NumeroAfiliacion)
 	}
 
-	// Espacio antes de consultas
-	m.AddRow(8)
+	m.AddRow(6)
 
-	// --- Consultas Section ---
+	// === CONSULTAS ===
 	if len(data.Consultas) == 0 {
-		m.AddRow(10, text.NewCol(12, "Sin consultas registradas", props.Text{
-			Size:  11,
-			Style: fontstyle.Italic,
-			Align: align.Center,
-		}))
+		m.AddRows(
+			row.New(10).Add(
+				text.NewCol(12, "Sin consultas registradas", props.Text{
+					Size:  10,
+					Style: fontstyle.Italic,
+					Align: align.Center,
+					Top:   3,
+				}),
+			).WithStyle(borderFull),
+		)
 	} else {
 		for idx, consulta := range data.Consultas {
-			// Encabezado de consulta
-			m.AddRow(8, text.NewCol(12, fmt.Sprintf("Consulta %d — %s", idx+1, formatBogota(consulta.FechaConsulta)), props.Text{
-				Size:  11,
-				Style: fontstyle.Bold,
-				Top:   2,
-			}))
+			// Encabezado de consulta (navy)
+			addSectionHeader(m, fmt.Sprintf("CONSULTA %d  —  %s", idx+1, formatBogota(consulta.FechaConsulta)))
 
-			// Médico
-			m.AddRow(5, text.NewCol(12, fmt.Sprintf("Médico: %s | %s", consulta.MedicoNombreCompleto, consulta.MedicoEspecialidad), props.Text{
-				Size:  9,
-				Style: fontstyle.Italic,
-			}))
-
-			// Motivo de consulta (obligatorio)
-			m.AddRow(5,
-				text.NewCol(4, "Motivo de consulta:", props.Text{Size: 9, Style: fontstyle.Bold}),
-				text.NewCol(8, consulta.MotivoConsulta, props.Text{Size: 9}),
+			// Fila de médico (gris claro)
+			medicoText := fmt.Sprintf("Médico: %s  |  %s", consulta.MedicoNombreCompleto, consulta.MedicoEspecialidad)
+			m.AddRows(
+				row.New(calcFieldRowHeight(medicoText, 8)).Add(
+					text.NewCol(12, medicoText, props.Text{Size: 8, Style: fontstyle.Italic, Top: 1}),
+				).WithStyle(medicoInfoCell()),
 			)
 
-			// Campos opcionales
+			// Campos de la consulta
+			addFieldRow(m, "Motivo de consulta:", consulta.MotivoConsulta)
 			if consulta.Anamnesis != nil {
-				m.AddRow(5,
-					text.NewCol(4, "Anamnesis:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.Anamnesis, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "Anamnesis:", *consulta.Anamnesis)
 			}
 			if consulta.RevisionSistemas != nil {
-				m.AddRow(5,
-					text.NewCol(4, "Revisión por sistemas:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.RevisionSistemas, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "Revisión por sistemas:", *consulta.RevisionSistemas)
 			}
-
-			// Signos vitales (solo si al menos uno está presente)
-			hasSignosVitales := consulta.PresionArterial != nil ||
-				consulta.FrecuenciaCardiaca != nil ||
-				consulta.FrecuenciaRespiratoria != nil ||
-				consulta.Temperatura != nil ||
-				consulta.SaturacionOxigeno != nil ||
-				consulta.PesoKg != nil ||
-				consulta.TallaCm != nil
-
-			if hasSignosVitales {
-				m.AddRow(5, text.NewCol(12, "Signos vitales:", props.Text{Size: 9, Style: fontstyle.Bold}))
-				if consulta.PresionArterial != nil {
-					m.AddRow(4,
-						text.NewCol(5, "  Presión arterial:", props.Text{Size: 8}),
-						text.NewCol(7, *consulta.PresionArterial, props.Text{Size: 8}),
-					)
-				}
-				if consulta.FrecuenciaCardiaca != nil {
-					m.AddRow(4,
-						text.NewCol(5, "  Frecuencia cardíaca:", props.Text{Size: 8}),
-						text.NewCol(7, fmt.Sprintf("%d lpm", *consulta.FrecuenciaCardiaca), props.Text{Size: 8}),
-					)
-				}
-				if consulta.FrecuenciaRespiratoria != nil {
-					m.AddRow(4,
-						text.NewCol(5, "  Frecuencia respiratoria:", props.Text{Size: 8}),
-						text.NewCol(7, fmt.Sprintf("%d rpm", *consulta.FrecuenciaRespiratoria), props.Text{Size: 8}),
-					)
-				}
-				if consulta.Temperatura != nil {
-					m.AddRow(4,
-						text.NewCol(5, "  Temperatura:", props.Text{Size: 8}),
-						text.NewCol(7, fmt.Sprintf("%.1f °C", *consulta.Temperatura), props.Text{Size: 8}),
-					)
-				}
-				if consulta.SaturacionOxigeno != nil {
-					m.AddRow(4,
-						text.NewCol(5, "  Saturación de oxígeno:", props.Text{Size: 8}),
-						text.NewCol(7, fmt.Sprintf("%d%%", *consulta.SaturacionOxigeno), props.Text{Size: 8}),
-					)
-				}
-				if consulta.PesoKg != nil {
-					m.AddRow(4,
-						text.NewCol(5, "  Peso:", props.Text{Size: 8}),
-						text.NewCol(7, fmt.Sprintf("%.1f kg", *consulta.PesoKg), props.Text{Size: 8}),
-					)
-				}
-				if consulta.TallaCm != nil {
-					m.AddRow(4,
-						text.NewCol(5, "  Talla:", props.Text{Size: 8}),
-						text.NewCol(7, fmt.Sprintf("%.1f cm", *consulta.TallaCm), props.Text{Size: 8}),
-					)
-				}
-			}
-
 			if consulta.ExamenFisico != nil {
-				m.AddRow(5,
-					text.NewCol(4, "Examen físico:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.ExamenFisico, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "Examen físico:", *consulta.ExamenFisico)
 			}
 			if consulta.HallazgosClinicos != nil {
-				m.AddRow(5,
-					text.NewCol(4, "Hallazgos clínicos:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.HallazgosClinicos, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "Hallazgos clínicos:", *consulta.HallazgosClinicos)
 			}
 			if consulta.DiagnosticoPrincipal != nil {
-				m.AddRow(5,
-					text.NewCol(4, "Diagnóstico:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.DiagnosticoPrincipal, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "Diagnóstico:", *consulta.DiagnosticoPrincipal)
 			}
 			if consulta.DiagnosticoCIE10 != nil {
-				m.AddRow(5,
-					text.NewCol(4, "CIE-10:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.DiagnosticoCIE10, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "CIE-10:", *consulta.DiagnosticoCIE10)
 			}
 			if consulta.PlanManejo != nil {
-				m.AddRow(5,
-					text.NewCol(4, "Plan de manejo:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.PlanManejo, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "Plan de manejo:", *consulta.PlanManejo)
 			}
 			if consulta.ProcedimientosIndicados != nil {
-				m.AddRow(5,
-					text.NewCol(4, "Procedimientos indicados:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.ProcedimientosIndicados, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "Procedimientos indicados:", *consulta.ProcedimientosIndicados)
 			}
 			if consulta.ObservacionesMedico != nil {
-				m.AddRow(5,
-					text.NewCol(4, "Observaciones del médico:", props.Text{Size: 9, Style: fontstyle.Bold}),
-					text.NewCol(8, *consulta.ObservacionesMedico, props.Text{Size: 9}),
-				)
+				addFieldRow(m, "Observaciones del médico:", *consulta.ObservacionesMedico)
 			}
 
-			// Fórmulas de esta consulta
-			if len(consulta.Formulas) > 0 {
-				m.AddRow(6, text.NewCol(12, "Fórmulas:", props.Text{Size: 10, Style: fontstyle.Bold, Top: 2}))
-				for _, formula := range consulta.Formulas {
-					// Encabezado de fórmula
-					titulo := fmt.Sprintf("Fórmula — %s", formatBogota(formula.FechaPrescripcion))
-					if formula.EstadoFormula == "anulada" {
-						titulo += " >> ANULADA <<"
-					}
-					m.AddRow(5, text.NewCol(12, titulo, props.Text{Size: 9, Style: fontstyle.Bold}))
+			// Signos vitales (sub-bloque gris si hay al menos uno)
+			hasVitales := consulta.PresionArterial != nil || consulta.FrecuenciaCardiaca != nil ||
+				consulta.FrecuenciaRespiratoria != nil || consulta.Temperatura != nil ||
+				consulta.SaturacionOxigeno != nil || consulta.PesoKg != nil || consulta.TallaCm != nil
 
-					// Tabla de medicamentos
-					if len(formula.Medicamentos) > 0 {
-						// Encabezado de tabla
-						headerRow := row.New(4).Add(
-							text.NewCol(4, "Medicamento", props.Text{Size: 8, Style: fontstyle.Bold}),
-							text.NewCol(2, "Dosis", props.Text{Size: 8, Style: fontstyle.Bold}),
-							text.NewCol(3, "Frecuencia", props.Text{Size: 8, Style: fontstyle.Bold}),
-							text.NewCol(3, "Duración", props.Text{Size: 8, Style: fontstyle.Bold}),
-						).WithStyle(&props.Cell{BackgroundColor: &props.Color{Red: 240, Green: 240, Blue: 240}})
-						m.AddRows(headerRow)
-
-						for _, med := range formula.Medicamentos {
-							m.AddRow(4,
-								text.NewCol(4, med.Nombre, props.Text{Size: 8}),
-								text.NewCol(2, med.Dosis, props.Text{Size: 8}),
-								text.NewCol(3, med.Frecuencia, props.Text{Size: 8}),
-								text.NewCol(3, med.Duracion, props.Text{Size: 8}),
-							)
-						}
-					}
-
-					// Indicaciones
-					if formula.Indicaciones != nil {
-						m.AddRow(4,
-							text.NewCol(3, "Indicaciones:", props.Text{Size: 8, Style: fontstyle.Bold}),
-							text.NewCol(9, *formula.Indicaciones, props.Text{Size: 8}),
-						)
-					}
+			if hasVitales {
+				m.AddRows(
+					row.New(5).Add(
+						text.NewCol(12, "Signos Vitales", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1}),
+					).WithStyle(tableHeaderCell()),
+				)
+				if consulta.PresionArterial != nil {
+					addFieldRow(m, "  Presión arterial:", *consulta.PresionArterial)
+				}
+				if consulta.FrecuenciaCardiaca != nil {
+					addFieldRow(m, "  Frecuencia cardíaca:", fmt.Sprintf("%d lpm", *consulta.FrecuenciaCardiaca))
+				}
+				if consulta.FrecuenciaRespiratoria != nil {
+					addFieldRow(m, "  Frecuencia respiratoria:", fmt.Sprintf("%d rpm", *consulta.FrecuenciaRespiratoria))
+				}
+				if consulta.Temperatura != nil {
+					addFieldRow(m, "  Temperatura:", fmt.Sprintf("%.1f °C", *consulta.Temperatura))
+				}
+				if consulta.SaturacionOxigeno != nil {
+					addFieldRow(m, "  Saturación O₂:", fmt.Sprintf("%d%%", *consulta.SaturacionOxigeno))
+				}
+				if consulta.PesoKg != nil {
+					addFieldRow(m, "  Peso:", fmt.Sprintf("%.1f kg", *consulta.PesoKg))
+				}
+				if consulta.TallaCm != nil {
+					addFieldRow(m, "  Talla:", fmt.Sprintf("%.1f cm", *consulta.TallaCm))
 				}
 			}
 
-			// Anexos de esta consulta
+			// Fórmulas de la consulta
+			if len(consulta.Formulas) > 0 {
+				m.AddRows(
+					row.New(5).Add(
+						text.NewCol(12, "FÓRMULAS", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1, Color: colorWhite}),
+					).WithStyle(sectionHeaderCell()),
+				)
+				for _, formula := range consulta.Formulas {
+					addFormulaBlock(m, formula)
+				}
+			}
+
+			// Anexos de la consulta
 			if len(consulta.Anexos) > 0 {
-				m.AddRow(6, text.NewCol(12, "Anexos:", props.Text{Size: 10, Style: fontstyle.Bold, Top: 2}))
-
-				// Encabezado de tabla
-				headerRow := row.New(4).Add(
-					text.NewCol(3, "Tipo", props.Text{Size: 8, Style: fontstyle.Bold}),
-					text.NewCol(6, "Descripción", props.Text{Size: 8, Style: fontstyle.Bold}),
-					text.NewCol(3, "Fecha", props.Text{Size: 8, Style: fontstyle.Bold}),
-				).WithStyle(&props.Cell{BackgroundColor: &props.Color{Red: 240, Green: 240, Blue: 240}})
-				m.AddRows(headerRow)
-
+				m.AddRows(
+					row.New(5).Add(
+						text.NewCol(12, "ANEXOS", props.Text{Size: 8, Style: fontstyle.Bold, Top: 1, Color: colorWhite}),
+					).WithStyle(sectionHeaderCell()),
+				)
+				addAnexosTableHeader(m)
 				for _, anexo := range consulta.Anexos {
 					desc := ""
 					if anexo.Descripcion != nil {
 						desc = *anexo.Descripcion
 					}
-					m.AddRow(4,
-						text.NewCol(3, anexo.TipoExamen, props.Text{Size: 8}),
-						text.NewCol(6, desc, props.Text{Size: 8}),
-						text.NewCol(3, formatBogota(anexo.FechaCarga), props.Text{Size: 8}),
+					rowH := calcFieldRowHeight(desc, 8)
+					m.AddRows(
+						row.New(rowH).Add(
+							text.NewCol(3, anexo.TipoExamen, props.Text{Size: 8, Top: 1}),
+							text.NewCol(6, desc, props.Text{Size: 8, Top: 1}),
+							text.NewCol(3, formatBogota(anexo.FechaCarga), props.Text{Size: 8, Top: 1}),
+						).WithStyle(borderFull),
 					)
 				}
 			}
 
-			// Espacio entre consultas
+			// Separador entre consultas
 			m.AddRow(6)
 		}
 	}
 
-	// --- Fórmulas Huérfanas ---
+	// === FÓRMULAS HUÉRFANAS ===
 	if len(data.FormulasHuerfanas) > 0 {
-		m.AddRow(8, text.NewCol(12, "Fórmulas sin consulta asociada", props.Text{
-			Size:  12,
-			Style: fontstyle.Bold,
-			Top:   3,
-		}))
-
+		addSectionHeader(m, "FÓRMULAS SIN CONSULTA ASOCIADA")
 		for _, formula := range data.FormulasHuerfanas {
-			titulo := fmt.Sprintf("Fórmula — %s", formatBogota(formula.FechaPrescripcion))
-			if formula.EstadoFormula == "anulada" {
-				titulo += " >> ANULADA <<"
-			}
-			m.AddRow(5, text.NewCol(12, titulo, props.Text{Size: 9, Style: fontstyle.Bold}))
-
-			if len(formula.Medicamentos) > 0 {
-				headerRow := row.New(4).Add(
-					text.NewCol(4, "Medicamento", props.Text{Size: 8, Style: fontstyle.Bold}),
-					text.NewCol(2, "Dosis", props.Text{Size: 8, Style: fontstyle.Bold}),
-					text.NewCol(3, "Frecuencia", props.Text{Size: 8, Style: fontstyle.Bold}),
-					text.NewCol(3, "Duración", props.Text{Size: 8, Style: fontstyle.Bold}),
-				).WithStyle(&props.Cell{BackgroundColor: &props.Color{Red: 240, Green: 240, Blue: 240}})
-				m.AddRows(headerRow)
-
-				for _, med := range formula.Medicamentos {
-					m.AddRow(4,
-						text.NewCol(4, med.Nombre, props.Text{Size: 8}),
-						text.NewCol(2, med.Dosis, props.Text{Size: 8}),
-						text.NewCol(3, med.Frecuencia, props.Text{Size: 8}),
-						text.NewCol(3, med.Duracion, props.Text{Size: 8}),
-					)
-				}
-			}
-
-			if formula.Indicaciones != nil {
-				m.AddRow(4,
-					text.NewCol(3, "Indicaciones:", props.Text{Size: 8, Style: fontstyle.Bold}),
-					text.NewCol(9, *formula.Indicaciones, props.Text{Size: 8}),
-				)
-			}
+			addFormulaBlock(m, formula)
 		}
-
 		m.AddRow(6)
 	}
 
-	// --- Anexos Huérfanos ---
+	// === ANEXOS HUÉRFANOS ===
 	if len(data.AnexosHuerfanos) > 0 {
-		m.AddRow(8, text.NewCol(12, "Anexos sin consulta asociada", props.Text{
-			Size:  12,
-			Style: fontstyle.Bold,
-			Top:   3,
-		}))
-
-		headerRow := row.New(4).Add(
-			text.NewCol(3, "Tipo", props.Text{Size: 8, Style: fontstyle.Bold}),
-			text.NewCol(6, "Descripción", props.Text{Size: 8, Style: fontstyle.Bold}),
-			text.NewCol(3, "Fecha", props.Text{Size: 8, Style: fontstyle.Bold}),
-		).WithStyle(&props.Cell{BackgroundColor: &props.Color{Red: 240, Green: 240, Blue: 240}})
-		m.AddRows(headerRow)
-
+		addSectionHeader(m, "ANEXOS SIN CONSULTA ASOCIADA")
+		addAnexosTableHeader(m)
 		for _, anexo := range data.AnexosHuerfanos {
 			desc := ""
 			if anexo.Descripcion != nil {
 				desc = *anexo.Descripcion
 			}
-			m.AddRow(4,
-				text.NewCol(3, anexo.TipoExamen, props.Text{Size: 8}),
-				text.NewCol(6, desc, props.Text{Size: 8}),
-				text.NewCol(3, formatBogota(anexo.FechaCarga), props.Text{Size: 8}),
+			rowH := calcFieldRowHeight(desc, 8)
+			m.AddRows(
+				row.New(rowH).Add(
+					text.NewCol(3, anexo.TipoExamen, props.Text{Size: 8, Top: 1}),
+					text.NewCol(6, desc, props.Text{Size: 8, Top: 1}),
+					text.NewCol(3, formatBogota(anexo.FechaCarga), props.Text{Size: 8, Top: 1}),
+				).WithStyle(borderFull),
 			)
 		}
 	}
 
-	// Generar el PDF
 	document, err := m.Generate()
 	if err != nil {
 		return nil, fmt.Errorf("maroto generation failed: %w", err)
 	}
-
 	return document.GetBytes(), nil
 }
 
-// --- Handler methods ---
+// --- Handler method ---
 
-// ExportPDF maneja GET /api/v1/pacientes/:id/historia-clinica/pdf
-// Requiere autenticación JWT (RequireAuth middleware). El acceso al paciente
-// ya fue validado por la UI; aquí solo verificamos que la historia exista.
 func (h *HistoriaClinicaPDFHandler) ExportPDF(c *gin.Context) {
-	// 1. Parsear :id como UUID
 	pacienteID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid paciente id"})
@@ -641,7 +644,6 @@ func (h *HistoriaClinicaPDFHandler) ExportPDF(c *gin.Context) {
 
 	ctx := context.Background()
 
-	// 2. Verificar que la historia clínica existe y obtener su ID
 	var hcID uuid.UUID
 	err = h.pool.QueryRow(ctx,
 		`SELECT id FROM historia_clinica WHERE paciente_id = $1`, pacienteID,
@@ -656,30 +658,24 @@ func (h *HistoriaClinicaPDFHandler) ExportPDF(c *gin.Context) {
 		return
 	}
 
-	// 4. Query 1 — paciente + entidad
 	const q1 = `
-SELECT
-    p.nombre_paciente, p.apellidos_paciente,
-    p.tipo_documento, p.numero_documento,
-    p.fecha_nacimiento, p.sexo,
-    p.tipo_sangre, p.aseguradora, p.numero_afiliacion,
-    e.nombre_entidad
+SELECT p.nombre_paciente, p.apellidos_paciente,
+       p.tipo_documento, p.numero_documento,
+       p.fecha_nacimiento, p.sexo,
+       p.tipo_sangre, p.aseguradora, p.numero_afiliacion,
+       e.nombre_entidad
 FROM paciente p
 JOIN historia_clinica hc ON hc.paciente_id = p.id
 JOIN entidad e ON e.id = hc.entidad_id
 WHERE p.id = $1`
 
 	var (
-		nombrePaciente   string
-		apellidosPaciente string
-		tipoDocumento    string
-		numeroDocumento  string
-		fechaNacimiento  time.Time
-		sexo             *string
-		tipoSangre       *string
-		aseguradora      *string
-		numeroAfiliacion *string
-		nombreEntidad    string
+		nombrePaciente, apellidosPaciente string
+		tipoDocumento, numeroDocumento    string
+		fechaNacimiento                   time.Time
+		sexo, tipoSangre                  *string
+		aseguradora, numeroAfiliacion     *string
+		nombreEntidad                     string
 	)
 	err = h.pool.QueryRow(ctx, q1, pacienteID).Scan(
 		&nombrePaciente, &apellidosPaciente,
@@ -694,17 +690,15 @@ WHERE p.id = $1`
 		return
 	}
 
-	// 5. Query 2 — consultas ASC
 	const q2 = `
-SELECT
-    c.id, c.fecha_consulta, c.tipo_consulta, c.motivo_consulta,
-    c.anamnesis, c.revision_sistemas, c.examen_fisico, c.hallazgos_clinicos,
-    c.presion_arterial, c.frecuencia_cardiaca, c.frecuencia_respiratoria,
-    c.temperatura, c.saturacion_oxigeno, c.peso_kg, c.talla_cm,
-    c.diagnostico_principal, c.diagnostico_cie10, c.plan_manejo,
-    c.procedimientos_indicados, c.observaciones_medico,
-    u.nombre_usuario || ' ' || u.apellidos AS medico_nombre,
-    m.especialidad AS medico_especialidad
+SELECT c.id, c.fecha_consulta, c.tipo_consulta, c.motivo_consulta,
+       c.anamnesis, c.revision_sistemas, c.examen_fisico, c.hallazgos_clinicos,
+       c.presion_arterial, c.frecuencia_cardiaca, c.frecuencia_respiratoria,
+       c.temperatura, c.saturacion_oxigeno, c.peso_kg, c.talla_cm,
+       c.diagnostico_principal, c.diagnostico_cie10, c.plan_manejo,
+       c.procedimientos_indicados, c.observaciones_medico,
+       u.nombre_usuario || ' ' || u.apellidos AS medico_nombre,
+       m.especialidad AS medico_especialidad
 FROM consulta c
 JOIN medico m ON m.id = c.medico_id
 JOIN usuario u ON u.id = m.usuario_id
@@ -749,11 +743,9 @@ ORDER BY c.fecha_consulta ASC`
 		return
 	}
 
-	// 6. Query 3 — fórmulas
 	const q3 = `
-SELECT
-    f.id, f.consulta_id, f.medicamentos, f.indicaciones,
-    f.fecha_prescripcion, f.estado_formula
+SELECT f.id, f.consulta_id, f.medicamentos, f.indicaciones,
+       f.fecha_prescripcion, f.estado_formula
 FROM formula_medica f
 WHERE f.historia_clinica_id = $1
 ORDER BY f.fecha_prescripcion ASC`
@@ -785,10 +777,8 @@ ORDER BY f.fecha_prescripcion ASC`
 		return
 	}
 
-	// 7. Query 4 — anexos
 	const q4 = `
-SELECT
-    e.consulta_id, e.tipo_examen, e.descripcion, e.fecha_carga
+SELECT e.consulta_id, e.tipo_examen, e.descripcion, e.fecha_carga
 FROM examinagen e
 WHERE e.historia_clinica_id = $1
 ORDER BY e.fecha_carga ASC`
@@ -819,9 +809,8 @@ ORDER BY e.fecha_carga ASC`
 		return
 	}
 
-	// 8. Ensamblar el struct completo
 	generadoEn := time.Now()
-	data, err := buildPDFData(
+	pdfData, err := buildPDFData(
 		nombrePaciente, apellidosPaciente,
 		tipoDocumento, numeroDocumento,
 		fechaNacimiento,
@@ -836,15 +825,13 @@ ORDER BY e.fecha_carga ASC`
 		return
 	}
 
-	// 9. Renderizar el PDF (stub en Tarea 2; implementación completa en Tarea 3)
-	pdfBytes, err := renderPDF(data)
+	pdfBytes, err := renderPDF(pdfData)
 	if err != nil {
 		log.Printf("export pdf error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error interno"})
 		return
 	}
 
-	// 10. Construir nombre de archivo y entregar la respuesta
 	filename := buildFilename(numeroDocumento, generadoEn)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	c.Header("Content-Length", fmt.Sprintf("%d", len(pdfBytes)))
