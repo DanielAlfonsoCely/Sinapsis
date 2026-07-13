@@ -17,6 +17,7 @@ DECLARE
     medico_id uuid;
     paciente_usuario_id uuid;
     paciente_id uuid;
+    historia_clinica_id uuid;
 
     entidad_ids uuid[] := ARRAY[]::uuid[];
     paciente_ids uuid[];
@@ -108,12 +109,33 @@ DECLARE
         'Consulta prioritaria',
         'Control de signos vitales'
     ];
+    diagnosticos text[] := ARRAY[
+        'Rinofaringitis aguda',
+        'Lumbago no especificado',
+        'Hipertension esencial primaria',
+        'Gastritis no especificada',
+        'Migraña sin aura',
+        'Dermatitis alergica de contacto',
+        'Diabetes mellitus tipo 2 sin complicaciones',
+        'Infeccion de vias urinarias'
+    ];
+    diagnosticos_cie10 text[] := ARRAY[
+        'J00',
+        'M545',
+        'I10',
+        'K297',
+        'G430',
+        'L239',
+        'E119',
+        'N390'
+    ];
 
     entidad_index int;
     medico_index int;
     doctor_counter int := 0;
     paciente_index int;
     patient_counter int := 0;
+    consulta_index int;
     day_offset int;
     cita_index int;
     paciente_nombre text;
@@ -317,7 +339,88 @@ BEGIN
                 paciente_ids := array_append(paciente_ids, paciente_id);
 
                 INSERT INTO historia_clinica (paciente_id, entidad_id, medico_tratante_id)
-                VALUES (paciente_id, entidad_ids[entidad_index], medico_id);
+                VALUES (paciente_id, entidad_ids[entidad_index], medico_id)
+                RETURNING id INTO historia_clinica_id;
+
+                -- Tres consultas previas completadas por paciente, en anos historicos.
+                FOR consulta_index IN 1..3 LOOP
+                    INSERT INTO consulta (
+                        historia_clinica_id,
+                        paciente_id,
+                        medico_id,
+                        tipo_consulta,
+                        motivo_consulta,
+                        diagnostico_principal,
+                        diagnostico_cie10,
+                        hallazgos_clinicos,
+                        anamnesis,
+                        revision_sistemas,
+                        examen_fisico,
+                        presion_arterial,
+                        frecuencia_cardiaca,
+                        frecuencia_respiratoria,
+                        temperatura,
+                        saturacion_oxigeno,
+                        peso_kg,
+                        talla_cm,
+                        observaciones_medico,
+                        plan_manejo,
+                        medicamentos_prescritos,
+                        procedimientos_indicados,
+                        proxima_cita,
+                        fecha_consulta,
+                        duracion_minutos,
+                        estado_consulta,
+                        pre_diagnostico
+                    )
+                    VALUES (
+                        historia_clinica_id,
+                        paciente_id,
+                        medico_id,
+                        CASE consulta_index
+                            WHEN 1 THEN 'Consulta de control'
+                            WHEN 2 THEN 'Consulta de seguimiento'
+                            ELSE 'Consulta prioritaria'
+                        END,
+                        motivos[((patient_counter + consulta_index - 2) % array_length(motivos, 1)) + 1],
+                        diagnosticos[((patient_counter + consulta_index - 2) % array_length(diagnosticos, 1)) + 1],
+                        diagnosticos_cie10[((patient_counter + consulta_index - 2) % array_length(diagnosticos_cie10, 1)) + 1],
+                        'Paciente estable, sin signos de alarma durante la valoracion.',
+                        'Refiere evolucion favorable desde el ultimo control.',
+                        'Niega sintomas respiratorios severos, dolor toracico o perdida de conciencia.',
+                        'Examen fisico general dentro de parametros esperados.',
+                        (110 + ((patient_counter + consulta_index) % 20))::text || '/' || (70 + ((patient_counter + consulta_index) % 12))::text,
+                        68 + ((patient_counter + consulta_index) % 24),
+                        14 + ((patient_counter + consulta_index) % 6),
+                        36.1 + (((patient_counter + consulta_index) % 8)::numeric / 10),
+                        94 + ((patient_counter + consulta_index) % 6),
+                        55 + ((patient_counter + consulta_index) % 38),
+                        150 + ((patient_counter + consulta_index) % 35),
+                        'Se explican signos de alarma y recomendaciones generales.',
+                        'Continuar manejo ambulatorio, control de habitos y seguimiento periodico.',
+                        CASE
+                            WHEN consulta_index = 1 THEN 'Acetaminofen 500 mg cada 8 horas si dolor o fiebre.'
+                            WHEN consulta_index = 2 THEN 'Loratadina 10 mg cada 24 horas por 5 dias si sintomas alergicos.'
+                            ELSE 'No se formulan medicamentos nuevos.'
+                        END,
+                        CASE
+                            WHEN consulta_index = 3 THEN 'Solicitar laboratorios de control segun evolucion.'
+                            ELSE 'No requiere procedimientos adicionales.'
+                        END,
+                        make_date(2023 + consulta_index, ((patient_counter + consulta_index) % 12) + 1, 20),
+                        make_timestamp(
+                            2022 + consulta_index,
+                            ((patient_counter + consulta_index) % 12) + 1,
+                            ((patient_counter + consulta_index) % 24) + 1,
+                            8 + ((patient_counter + consulta_index) % 8),
+                            CASE WHEN consulta_index = 1 THEN 0 WHEN consulta_index = 2 THEN 30 ELSE 15 END,
+                            0
+                        ),
+                        25 + (consulta_index * 5),
+                        'completada',
+                        'Valoracion inicial sugiere condicion controlada sin criterios de urgencia.'
+                    );
+                END LOOP;
             END LOOP;
 
             -- Cuatro citas diarias por medico durante tres dias.
