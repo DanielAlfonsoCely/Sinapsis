@@ -71,6 +71,7 @@ services:
     build:
       context: ./microservice
     container_name: sinapsis_ai
+    restart: on-failure
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_REQUEST_QUEUE: ai.analysis.requests

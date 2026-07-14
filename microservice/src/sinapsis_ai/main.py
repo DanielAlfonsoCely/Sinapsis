@@ -23,6 +23,7 @@ import time
 from types import FrameType
 
 import pika
+from pika.exceptions import AMQPConnectionError
 
 from sinapsis_ai.application.analysis_service import AnalysisService
 from sinapsis_ai.config import Settings
@@ -95,7 +96,35 @@ def main() -> None:
     )
 
     # --- Transport layer: single shared connection + channel ---
-    connection = pika.BlockingConnection(pika.URLParameters(settings.rabbitmq_url))
+    # Retry with exponential backoff so the container survives a slow broker
+    # startup (RabbitMQ typically needs 15-30 s to be fully ready in Docker).
+    _amqp_max_attempts = 10
+    _amqp_backoff_s = 3.0
+    connection: pika.BlockingConnection | None = None
+    for attempt in range(1, _amqp_max_attempts + 1):
+        try:
+            connection = pika.BlockingConnection(
+                pika.URLParameters(settings.rabbitmq_url)
+            )
+            break
+        except AMQPConnectionError as exc:
+            if attempt == _amqp_max_attempts:
+                logger.error(
+                    "Could not connect to RabbitMQ after %d attempts — giving up: %s",
+                    _amqp_max_attempts,
+                    exc,
+                )
+                sys.exit(1)
+            wait = _amqp_backoff_s * attempt
+            logger.warning(
+                "RabbitMQ not ready (attempt %d/%d), retrying in %.0fs: %s",
+                attempt,
+                _amqp_max_attempts,
+                wait,
+                exc,
+            )
+            time.sleep(wait)
+    assert connection is not None
     channel = connection.channel()
 
     # --- AMQP topology: DLX + request queue with dead-letter binding ---
