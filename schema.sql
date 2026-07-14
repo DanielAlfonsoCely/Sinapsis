@@ -227,11 +227,18 @@ CREATE TABLE sugerencia_ia (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     examinagen_id UUID NOT NULL,
     historia_clinica_id UUID NOT NULL,
-    modelo_ia_utilizado VARCHAR(100) NOT NULL,
+    -- correlación con el mensaje AMQP (contrato PROJECT_ARCHITECTURE §9)
+    request_id UUID UNIQUE,                                          -- id del AnalysisRequest enviado
+    correlation_id UUID,                                             -- trazabilidad end-to-end
+    estado_procesamiento VARCHAR(20) NOT NULL DEFAULT 'enviado',     -- enviado | completado | fallido
+    -- resultado del modelo (rellenado por el consumer al recibir AnalysisResult)
+    modelo_ia_utilizado VARCHAR(100) NOT NULL DEFAULT '',
     confianza_prediccion DECIMAL(5,2),
     descripcion_hallazgo TEXT,
     diagnostico_sugerido VARCHAR(255),
+    metricas JSONB,                                                  -- metrics + artifacts crudos del modelo
     fecha_analisis TIMESTAMP DEFAULT NOW(),
+    -- revisión médica (flujo independiente del procesamiento IA)
     estado_revision estado_revision_enum NOT NULL DEFAULT 'pendiente',
     observaciones_medico TEXT,
     fecha_revision TIMESTAMP,

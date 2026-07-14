@@ -9,61 +9,50 @@ import (
 	"sinapsis-backend/db/repositories"
 	"sinapsis-backend/handlers"
 	"sinapsis-backend/middleware"
+	"sinapsis-backend/queue"
 	"sinapsis-backend/services"
 )
 
 type Handler struct {
-	auth      *handlers.AuthHandler
-	usuario   *handlers.UsuarioHandler
-	paciente  *handlers.PacienteHandler
-	consulta  *handlers.ConsultaHandler
-	cita      *handlers.CitaHandler
-	entidad   *handlers.EntidadHandler
-	formula   *handlers.FormulaHandler
-	anexo     *handlers.AnexoHandler
-	auditoria *handlers.AuditoriaHandler
 	auth               *handlers.AuthHandler
+	usuario            *handlers.UsuarioHandler
 	paciente           *handlers.PacienteHandler
 	consulta           *handlers.ConsultaHandler
 	cita               *handlers.CitaHandler
 	entidad            *handlers.EntidadHandler
 	formula            *handlers.FormulaHandler
 	anexo              *handlers.AnexoHandler
+	auditoria          *handlers.AuditoriaHandler
 	historiaClinicaPDF *handlers.HistoriaClinicaPDFHandler
 	adminUsuario       *handlers.AdminUsuarioHandler
+	analisisIA         *handlers.AnalisisIAHandler
 }
 
-func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
+func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *queue.Publisher) {
 	// --- Auditoría: repo + observer + publisher, se arman una sola vez ---
 	auditRepo := repositories.NewAuditRepository(pool)
 	dbObserver := audit.NewDBAuditObserver(auditRepo)
-	publisher := audit.NewPublisher(dbObserver) // agrega más observers aquí a futuro
+	auditPublisher := audit.NewPublisher(dbObserver)
 
-	auditService := services.NewAuditService(auditRepo) // lectura, para el handler de consulta
+	auditService := services.NewAuditService(auditRepo)
 
-	// --- Usuarios: ahora el service recibe el publisher ---
+	// --- Usuarios ---
 	usuarioRepo := repositories.NewUsuarioRepository(pool)
-	usuarioService := services.NewUsuarioService(usuarioRepo, publisher)
+	usuarioService := services.NewUsuarioService(usuarioRepo, auditPublisher)
 
 	h := &Handler{
-		auth:      handlers.NewAuthHandler(pool, cfg),
-		usuario:   handlers.NewUsuarioHandler(usuarioService),
-		paciente:  handlers.NewPacienteHandler(pool),
-		consulta:  handlers.NewConsultaHandler(pool),
-		cita:      handlers.NewCitaHandler(pool),
-		entidad:   handlers.NewEntidadHandler(pool),
-		formula:   handlers.NewFormulaHandler(pool),
-		anexo:     handlers.NewAnexoHandler(pool, cfg.UploadsDir),
-		auditoria: handlers.NewAuditoriaHandler(auditService),
 		auth:               handlers.NewAuthHandler(pool, cfg),
+		usuario:            handlers.NewUsuarioHandler(usuarioService),
 		paciente:           handlers.NewPacienteHandler(pool),
 		consulta:           handlers.NewConsultaHandler(pool),
 		cita:               handlers.NewCitaHandler(pool),
 		entidad:            handlers.NewEntidadHandler(pool),
 		formula:            handlers.NewFormulaHandler(pool),
 		anexo:              handlers.NewAnexoHandler(pool, cfg.UploadsDir),
+		auditoria:          handlers.NewAuditoriaHandler(auditService),
 		historiaClinicaPDF: handlers.NewHistoriaClinicaPDFHandler(pool),
 		adminUsuario:       handlers.NewAdminUsuarioHandler(pool),
+		analisisIA:         handlers.NewAnalisisIAHandler(pool, publisher),
 	}
 
 	r.GET("/health", func(c *gin.Context) {
@@ -88,8 +77,6 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 			pacientes.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.Create)
 			pacientes.POST("/:id/remisiones", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.AutorizarEspecialidad)
 			pacientes.GET("/:id/historia-clinica/pdf", middleware.RequireAuth(cfg), h.historiaClinicaPDF.ExportPDF)
-			pacientes.POST("", middleware.RequireAuth(cfg), h.paciente.Create)
-			pacientes.POST("/:id/remisiones", middleware.RequireAuth(cfg), h.paciente.AutorizarEspecialidad)
 		}
 
 		api.GET("/especialidades", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.ListEspecialidades)
@@ -105,21 +92,21 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 
 		citas := api.Group("/citas")
 		{
-			citas.GET("/hoy", middleware.RequireAuth(cfg), h.cita.CitasHoy)
-			citas.GET("/semana", middleware.RequireAuth(cfg), h.cita.CitasSemana)
-			citas.GET("/disponibilidad", middleware.RequireAuth(cfg), h.cita.Disponibilidad)
-			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
 			citas.GET("/hoy", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.cita.CitasHoy)
 			citas.GET("/semana", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.cita.CitasSemana)
+			citas.GET("/disponibilidad", middleware.RequireAuth(cfg), h.cita.Disponibilidad)
 			citas.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("paciente"), h.cita.Create)
 		}
 
 		admin := api.Group("/admin")
-		admin.Use(middleware.RequireAuth(cfg), middleware.RequireRole("admin_plataforma"))
 		admin.Use(middleware.RequireAuth(cfg), middleware.RequireAdmin(cfg))
 		{
-			admin.GET("/usuarios", h.adminUsuario.ListUsuarios)
-			admin.PATCH("/usuarios/:id/rol", h.adminUsuario.PatchRol)
+			admin.GET("/usuarios", h.usuario.ObtenerUsuarios)
+			admin.POST("/usuarios", h.usuario.CrearUsuario)
+			admin.PUT("/usuarios/:id", h.usuario.EditarUsuario)
+			admin.DELETE("/usuarios/:id", h.usuario.EliminarUsuario)
+			admin.PATCH("/usuarios/:id/rol", h.usuario.AsignarRol)
+			admin.GET("/auditoria", h.auditoria.List)
 			admin.GET("/entidades", h.entidad.ListAdmin)
 			admin.GET("/entidades/:id", h.entidad.GetByIDAdmin)
 			admin.GET("/stats", h.entidad.Stats)
@@ -127,24 +114,26 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 
 		entidades := api.Group("/entidades")
 		{
-			admin.GET("/usuarios", h.usuario.ObtenerUsuarios)
-			admin.POST("/usuarios", h.usuario.CrearUsuario)          // HU-19
-			admin.PUT("/usuarios/:id", h.usuario.EditarUsuario)      // HU-20
-			admin.DELETE("/usuarios/:id", h.usuario.EliminarUsuario) // HU-21
-			admin.PATCH("/usuarios/:id/rol", h.usuario.AsignarRol)   // HU-22
-			admin.GET("/auditoria", h.auditoria.List)                // ver el log
+			entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)
+			entidades.POST("", middleware.RequireAuth(cfg), h.entidad.Create)
+		}
 
-			entidades := api.Group("/entidades")
-			{
-				entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)
-				entidades.POST("", middleware.RequireAuth(cfg), h.entidad.Create)
-			}
+		formulas := api.Group("/formulas")
+		{
+			formulas.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.formula.Create)
+			formulas.POST("/:id/anular", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.formula.Anular)
+		}
 
-			formulas := api.Group("/formulas")
-			{
-				formulas.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.formula.Create)
-				formulas.POST("/:id/anular", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.formula.Anular)
-			}
+		// Módulo de análisis IA (MONAI) — conectado al microservicio vía RabbitMQ
+		examenes := api.Group("/examenes")
+		{
+			examenes.POST("/:id/analisis-ia", middleware.RequireAuth(cfg), h.analisisIA.SolicitarAnalisis)
+		}
+
+		sugerencias := api.Group("/sugerencias-ia")
+		{
+			sugerencias.GET("/:id", middleware.RequireAuth(cfg), h.analisisIA.GetSugerencia)
+			sugerencias.PATCH("/:id/revision", middleware.RequireAuth(cfg), h.analisisIA.Revision)
 		}
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -12,6 +14,7 @@ import (
 
 	"sinapsis-backend/config"
 	"sinapsis-backend/db"
+	"sinapsis-backend/queue"
 	"sinapsis-backend/routes"
 )
 
@@ -29,7 +32,9 @@ func main() {
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable&timezone=America/Bogota",
 		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName)
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
 	pool, err := db.Connect(ctx, dsn)
 	if err != nil {
 		log.Fatalf("database connection failed: %v", err)
@@ -42,6 +47,30 @@ func main() {
 		log.Fatalf("no se pudo crear el directorio de uploads: %v", err)
 	}
 
+	// Conexión AMQP con el microservicio de IA (opcional: si RABBITMQ_URL no está
+	// configurada, el servidor arranca en modo degradado sin IA).
+	var amqpConn *queue.Connection
+	var publisher *queue.Publisher
+	if cfg.RabbitMQURL != "" {
+		amqpConn, err = queue.Connect(
+			cfg.RabbitMQURL,
+			cfg.RabbitMQRequestQueue,
+			cfg.RabbitMQResultExchange,
+			cfg.RabbitMQResultRoutingKey,
+			cfg.RabbitMQResultQueue,
+		)
+		if err != nil {
+			log.Printf("amqp: no se pudo conectar, IA deshabilitada: %v", err)
+		} else {
+			defer amqpConn.Close()
+			publisher = queue.NewPublisher(amqpConn.Channel, cfg.RabbitMQRequestQueue)
+			consumer := queue.NewConsumer(amqpConn.Channel, cfg.RabbitMQResultQueue, pool)
+			go consumer.Start(ctx)
+		}
+	} else {
+		log.Println("RABBITMQ_URL no configurada, módulo de IA deshabilitado")
+	}
+
 	r := gin.Default()
 
 	r.Use(cors.New(cors.Config{
@@ -51,7 +80,7 @@ func main() {
 		AllowCredentials: true,
 	}))
 
-	routes.Setup(r, pool, cfg)
+	routes.Setup(r, pool, cfg, publisher)
 
 	log.Printf("server starting on :%s", cfg.ServerPort)
 	if err := r.Run(":" + cfg.ServerPort); err != nil {

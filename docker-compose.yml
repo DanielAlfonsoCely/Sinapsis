@@ -20,6 +20,22 @@ services:
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: sinapsis_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # management UI: http://localhost:15672 (guest/guest)
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   backend:
     build:
       context: ./backend
@@ -37,10 +53,42 @@ services:
       SERVER_PORT: "8080"
       TZ: America/Bogota
       UPLOADS_DIR: /app/uploads
+      # RabbitMQ — microservicio IA
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_REQUEST_QUEUE: ai.analysis.requests
+      RABBITMQ_RESULT_EXCHANGE: sinapsis.ai
+      RABBITMQ_RESULT_ROUTING_KEY: ai.analysis.result
+      RABBITMQ_RESULT_QUEUE: backend.ai.results
     volumes:
       - uploads:/app/uploads
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  sinapsis-ai:
+    build:
+      context: ./microservice
+    container_name: sinapsis_ai
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_REQUEST_QUEUE: ai.analysis.requests
+      RABBITMQ_RESULT_EXCHANGE: sinapsis.ai
+      RABBITMQ_RESULT_ROUTING_KEY: ai.analysis.result
+      RABBITMQ_PREFETCH: "1"
+      BUNDLE_CACHE_DIR: /app/.bundle_cache
+      BUNDLE_SOURCE: monaihosting
+      # Habilitar los cuatro modelos MONAI
+      ALLOWED_ANALYSIS_TYPES: ct_spleen_segmentation,ct_lung_nodule_detection,mri_brain_tumor_segmentation,xr_breast_density_classification
+      MODEL_DEVICE: cpu
+      IMAGE_STORAGE_BACKEND: file
+      LOG_LEVEL: INFO
+    volumes:
+      - bundle_cache:/app/.bundle_cache
+      - uploads:/app/uploads   # imagen de entrada accesible por el worker
+    depends_on:
+      rabbitmq:
         condition: service_healthy
 
   frontend:
@@ -58,3 +106,4 @@ services:
 volumes:
   pgdata:
   uploads:
+  bundle_cache:
