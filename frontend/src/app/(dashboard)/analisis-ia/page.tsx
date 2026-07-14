@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   BrainCircuit,
@@ -14,10 +14,12 @@ import {
   Clock,
   Loader2,
   XCircle,
+  Send,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -32,9 +34,13 @@ interface Metricas {
 interface Sugerencia {
   id: string;
   examinagen_id: string;
+  consulta_id?: string;
   historia_clinica_id: string;
   estado_procesamiento: "enviado" | "completado" | "fallido";
   modelo_ia_utilizado: string;
+  // RF-12/RN-007: sin pre-diagnóstico registrado en la consulta, el backend
+  // oculta confianza_prediccion/descripcion_hallazgo/diagnostico_sugerido/metricas.
+  pre_diagnostico_registrado: boolean;
   confianza_prediccion?: number;
   descripcion_hallazgo?: string;
   diagnostico_sugerido?: string;
@@ -61,61 +67,61 @@ function authHeaders(): HeadersInit {
 }
 
 // Mapea las métricas numéricas del modelo a hallazgos visualizables.
+//
+// Campos reales por tipo de bundle (microservice/.../output_extractors.py):
+//   - Segmentación (bazo, tumor cerebral) -> SegmentationExtractor: { volume_voxels }
+//   - Detección de nódulo pulmonar        -> DetectionExtractor:    { lesion_count, max_diameter_mm }
+//   - Clasificación (densidad mamaria)    -> BreastDensityCSVExtractor: { predicted_class, probability }
 function metricasAHallazgos(
-  metricas?: Metricas
+  metricas?: Metricas,
+  modelo?: string
 ): Array<{ label: string; confidence: number; tone: "danger" | "warning" | "success" }> {
   if (!metricas?.metrics) return [];
 
-  const m = metricas.metrics as Record<string, number>;
+  const m = metricas.metrics as Record<string, number | string>;
   const hallazgos: Array<{
     label: string;
     confidence: number;
     tone: "danger" | "warning" | "success";
   }> = [];
 
-  // Segmentación de bazo: volume_ml
-  if (m.volume_ml !== undefined) {
-    const normalMax = 314; // ml referencia adulto
-    const pct = Math.min(100, Math.round((m.volume_ml / normalMax) * 100));
+  // Segmentación (bazo o tumor cerebral, según el bundle usado): volume_voxels.
+  if (m.volume_voxels !== undefined) {
+    const voxels = Number(m.volume_voxels);
+    const esBazo = (modelo || "").includes("spleen");
+    const label = esBazo ? "Volumen segmentado (bazo)" : "Volumen segmentado";
     hallazgos.push({
-      label: `Volumen esplénico: ${m.volume_ml.toFixed(1)} ml`,
-      confidence: pct,
-      tone: m.volume_ml > normalMax ? "danger" : "success",
+      label: `${label}: ${voxels.toLocaleString("es-CO")} vóxeles`,
+      confidence: voxels > 0 ? 90 : 100,
+      tone: voxels > 0 ? (esBazo ? "success" : "danger") : "success",
     });
   }
 
   // Detección de nódulo pulmonar: lesion_count, max_diameter_mm
   if (m.lesion_count !== undefined) {
+    const lesionCount = Number(m.lesion_count);
     hallazgos.push({
-      label: `Nódulos detectados: ${m.lesion_count}`,
-      confidence: m.lesion_count > 0 ? 90 : 100,
-      tone: m.lesion_count > 0 ? "danger" : "success",
+      label: `Nódulos detectados: ${lesionCount}`,
+      confidence: lesionCount > 0 ? 90 : 100,
+      tone: lesionCount > 0 ? "danger" : "success",
     });
   }
   if (m.max_diameter_mm !== undefined) {
+    const maxDiameter = Number(m.max_diameter_mm);
     hallazgos.push({
-      label: `Diámetro máximo: ${m.max_diameter_mm.toFixed(1)} mm`,
-      confidence: Math.min(100, Math.round(m.max_diameter_mm)),
-      tone: m.max_diameter_mm > 6 ? "warning" : "success",
+      label: `Diámetro máximo: ${maxDiameter.toFixed(1)} mm`,
+      confidence: Math.min(100, Math.round(maxDiameter)),
+      tone: maxDiameter > 6 ? "warning" : "success",
     });
   }
 
-  // Densidad mamaria: predicted_class (A-D), probability
+  // Clasificación (densidad mamaria): predicted_class (A-D), probability
   if (m.predicted_class !== undefined) {
-    const pct = m.probability !== undefined ? Math.round((m.probability as number) * 100) : 80;
+    const pct = m.probability !== undefined ? Math.round(Number(m.probability) * 100) : 80;
     hallazgos.push({
       label: `Densidad mamaria clase ${m.predicted_class}`,
       confidence: pct,
       tone: String(m.predicted_class) >= "C" ? "warning" : "success",
-    });
-  }
-
-  // Tumor cerebral: cualquier métrica de volumen de segmentación
-  if (m.tumor_volume_ml !== undefined) {
-    hallazgos.push({
-      label: `Volumen tumoral: ${(m.tumor_volume_ml as number).toFixed(1)} ml`,
-      confidence: 85,
-      tone: (m.tumor_volume_ml as number) > 0 ? "danger" : "success",
     });
   }
 
@@ -149,16 +155,208 @@ function EstadoFallido({ mensaje }: { mensaje?: string }) {
   );
 }
 
-function SinID() {
+// RF-12/RN-007: gate de pre-diagnóstico. El médico debe registrar su propia
+// impresión clínica inicial en la consulta ANTES de solicitar o visualizar
+// hallazgos de análisis IA (evita que la sugerencia del modelo sesgue el
+// juicio clínico inicial). Se usa tanto al solicitar como al ver resultados.
+function PreDiagnosticoGate({
+  consultaId,
+  onRegistered,
+}: {
+  consultaId: string;
+  onRegistered: () => void;
+}) {
+  const [texto, setTexto] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleRegistrar = useCallback(async () => {
+    if (!texto.trim() || enviando) return;
+    setEnviando(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API}/consultas/${consultaId}/pre-diagnostico`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ pre_diagnostico: texto.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `Error ${res.status}`);
+        return;
+      }
+      onRegistered();
+    } catch {
+      setError("Error de red al registrar el pre-diagnóstico");
+    } finally {
+      setEnviando(false);
+    }
+  }, [texto, enviando, consultaId, onRegistered]);
+
   return (
-    <div className="flex flex-col items-center gap-4 py-16 text-slate">
-      <BrainCircuit className="size-10 text-muted" />
-      <p className="font-semibold">Sin análisis seleccionado</p>
-      <p className="text-sm text-muted">
-        Accede a esta pantalla desde un examen médico para ver el resultado del
-        análisis IA.
+    <Card className="flex flex-col gap-3 border-warning/30 bg-warning/5 p-5">
+      <div className="flex items-center gap-2">
+        <ShieldAlert className="size-5 text-warning" />
+        <h3 className="font-display font-semibold text-ink">
+          Pre-diagnóstico requerido (RF-12)
+        </h3>
+      </div>
+      <p className="text-sm text-slate">
+        Debes registrar tu impresión clínica inicial{" "}
+        <strong>antes de ver las sugerencias de IA</strong>, para que el
+        modelo no sesgue tu juicio clínico. Esta consulta aún no tiene un
+        pre-diagnóstico registrado.
       </p>
-      <Button asChild variant="ghost">
+      <textarea
+        className="w-full resize-none rounded-[var(--radius)] border border-line bg-field px-4 py-3 text-sm text-ink placeholder:text-muted outline-none focus:border-teal focus:bg-white focus:ring-2 focus:ring-teal/20"
+        rows={3}
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        placeholder="Impresión diagnóstica inicial, antes de ver sugerencias de IA…"
+      />
+      {error && (
+        <div className="rounded-[var(--radius)] border border-danger/30 bg-danger/8 p-3 text-sm text-danger">
+          {error}
+        </div>
+      )}
+      <Button onClick={handleRegistrar} disabled={enviando || !texto.trim()}>
+        {enviando ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <CheckCircle className="size-4" />
+        )}
+        Registrar pre-diagnóstico y continuar
+      </Button>
+    </Card>
+  );
+}
+
+const ANALYSIS_TYPES = [
+  { value: "ct_spleen_segmentation", label: "Segmentación de bazo (TC)" },
+  { value: "ct_lung_nodule_detection", label: "Detección de nódulo pulmonar (TC)" },
+  { value: "mri_brain_tumor_segmentation", label: "Segmentación de tumor cerebral (RM)" },
+  { value: "xr_breast_density_classification", label: "Clasificación de densidad mamaria (RX)" },
+];
+
+function SolicitarAnalisis() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const examinagenIdParam = searchParams.get("examinagenId") || "";
+  const [examinagenId, setExaminagenId] = useState(examinagenIdParam);
+  const [analysisType, setAnalysisType] = useState(ANALYSIS_TYPES[0].value);
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // RF-12/RN-007: si el backend rechaza la solicitud por falta de
+  // pre-diagnóstico, guardamos el consulta_id que devuelve para ofrecer
+  // registrarlo aquí mismo sin salir de la página.
+  const [consultaIdSinPreDiagnostico, setConsultaIdSinPreDiagnostico] =
+    useState<string | null>(null);
+
+  // El componente puede quedar montado al navegar entre exámenes de distintos
+  // pacientes (misma ruta /analisis-ia, solo cambia el query param). useState
+  // solo toma el valor inicial una vez, así que sin este efecto el campo se
+  // queda con el examen anterior y el análisis se dispara sobre el examen
+  // equivocado. Sincronizamos explícitamente cada vez que cambia el param.
+  useEffect(() => {
+    setExaminagenId(examinagenIdParam);
+    setError(null);
+    setConsultaIdSinPreDiagnostico(null);
+  }, [examinagenIdParam]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!examinagenId.trim() || enviando) return;
+    setEnviando(true);
+    setError(null);
+    setConsultaIdSinPreDiagnostico(null);
+    try {
+      const res = await fetch(`${API}/examenes/${examinagenId.trim()}/analisis-ia`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ analysis_type: analysisType }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === "pre_diagnostico_required" && data.consulta_id) {
+          setConsultaIdSinPreDiagnostico(data.consulta_id);
+        } else {
+          setError(data.error || `Error ${res.status}`);
+        }
+        return;
+      }
+      router.push(`/analisis-ia?id=${data.id}`);
+    } catch {
+      setError("Error de red al solicitar el análisis");
+    } finally {
+      setEnviando(false);
+    }
+  }, [examinagenId, analysisType, enviando, router]);
+
+  return (
+    <div className="mx-auto flex max-w-lg flex-col gap-6 py-12">
+      <div className="flex items-center gap-2">
+        <BrainCircuit className="size-6 text-teal" />
+        <h2 className="font-display text-2xl font-semibold text-ink">
+          Solicitar análisis IA
+        </h2>
+      </div>
+
+      <p className="text-sm text-slate">
+        Ingresa el ID del examen (examinagen) que ya tiene una imagen cargada y
+        selecciona el tipo de análisis a ejecutar con MONAI.
+      </p>
+
+      <Card className="flex flex-col gap-4 p-5">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-ink">ID del examen</label>
+          <Input
+            placeholder="Ej: a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            value={examinagenId}
+            onChange={(e) => setExaminagenId(e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-ink">Tipo de análisis</label>
+          <select
+            className="flex h-10 w-full rounded-[var(--radius)] border border-line bg-field px-3 py-2 text-sm text-ink outline-none focus:border-teal"
+            value={analysisType}
+            onChange={(e) => setAnalysisType(e.target.value)}
+          >
+            {ANALYSIS_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {error && (
+          <div className="rounded-[var(--radius)] border border-danger/30 bg-danger/8 p-3 text-sm text-danger">
+            {error}
+          </div>
+        )}
+
+        <Button onClick={handleSubmit} disabled={enviando || !examinagenId.trim()}>
+          {enviando ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Send className="size-4" />
+          )}
+          Solicitar análisis
+        </Button>
+      </Card>
+
+      {consultaIdSinPreDiagnostico && (
+        <PreDiagnosticoGate
+          consultaId={consultaIdSinPreDiagnostico}
+          onRegistered={() => {
+            setConsultaIdSinPreDiagnostico(null);
+            handleSubmit();
+          }}
+        />
+      )}
+
+      <Button asChild variant="ghost" className="self-start">
         <Link href="/consulta">
           <ChevronLeft className="size-4" />
           Volver a consulta
@@ -180,32 +378,50 @@ function AnalisisIAContent() {
   const [error, setError] = useState<string | null>(null);
   const [revisando, setRevisando] = useState(false);
   const [aceptada, setAceptada] = useState(false);
+  // Incrementar fuerza un refetch inmediato fuera del intervalo de polling
+  // (p.ej. tras registrar el pre-diagnóstico requerido por RF-12).
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Polling hasta que el estado_procesamiento salga de 'enviado'.
+  //
+  // Importante: esta página puede quedar montada al navegar entre exámenes de
+  // distintos pacientes (misma ruta /analisis-ia, solo cambia ?id=). Si no
+  // reseteamos el estado local al cambiar sugerenciaId, la UI sigue mostrando
+  // datos/estado del examen anterior (p.ej. "aceptada") mientras llega la
+  // respuesta del nuevo — pareciendo que es "el mismo examen".
   useEffect(() => {
+    setSugerencia(null);
+    setError(null);
+    setAceptada(false);
+
     if (!sugerenciaId) return;
+
+    let cancelado = false;
 
     const fetchSugerencia = async () => {
       try {
         const res = await fetch(`${API}/sugerencias-ia/${sugerenciaId}`, {
           headers: authHeaders(),
         });
+        if (cancelado) return;
         if (!res.ok) {
           setError(`Error ${res.status} al obtener el análisis`);
           clearInterval(intervalRef.current!);
           return;
         }
         const data: Sugerencia = await res.json();
+        if (cancelado) return;
         setSugerencia(data);
         if (data.estado_procesamiento !== "enviado") {
           clearInterval(intervalRef.current!);
         }
-        if (data.estado_revision === "revisada") {
-          setAceptada(true);
-        }
+        // Refleja el estado real del backend, no solo cuando es "revisada":
+        // evita arrastrar el "aceptada=true" de un examen previamente revisado.
+        setAceptada(data.estado_revision === "revisada");
       } catch {
+        if (cancelado) return;
         setError("Error de red al obtener el análisis");
         clearInterval(intervalRef.current!);
       }
@@ -215,9 +431,10 @@ function AnalisisIAContent() {
     intervalRef.current = setInterval(fetchSugerencia, 5000);
 
     return () => {
+      cancelado = true;
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [sugerenciaId]);
+  }, [sugerenciaId, refetchTrigger]);
 
   const handleAceptar = async () => {
     if (!sugerenciaId || revisando) return;
@@ -239,9 +456,11 @@ function AnalisisIAContent() {
     }
   };
 
-  const hallazgos = sugerencia ? metricasAHallazgos(sugerencia.metricas) : [];
+  const hallazgos = sugerencia
+    ? metricasAHallazgos(sugerencia.metricas, sugerencia.modelo_ia_utilizado)
+    : [];
 
-  if (!sugerenciaId) return <SinID />;
+  if (!sugerenciaId) return <SolicitarAnalisis />;
 
   return (
     <div className="flex flex-col gap-6">
@@ -307,8 +526,21 @@ function AnalisisIAContent() {
         <EstadoFallido />
       )}
 
-      {/* Estado: completado */}
-      {!error && sugerencia?.estado_procesamiento === "completado" && (
+      {/* Estado: completado, pero falta pre-diagnóstico (RF-12/RN-007) */}
+      {!error &&
+        sugerencia?.estado_procesamiento === "completado" &&
+        !sugerencia.pre_diagnostico_registrado &&
+        sugerencia.consulta_id && (
+          <PreDiagnosticoGate
+            consultaId={sugerencia.consulta_id}
+            onRegistered={() => setRefetchTrigger((n) => n + 1)}
+          />
+        )}
+
+      {/* Estado: completado y con pre-diagnóstico registrado -> se ven los hallazgos */}
+      {!error &&
+        sugerencia?.estado_procesamiento === "completado" &&
+        sugerencia.pre_diagnostico_registrado && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]">
           {/* Panel info examen */}
           <Card className="flex flex-col gap-4 p-5">

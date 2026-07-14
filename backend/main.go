@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -52,15 +53,9 @@ func main() {
 	var amqpConn *queue.Connection
 	var publisher *queue.Publisher
 	if cfg.RabbitMQURL != "" {
-		amqpConn, err = queue.Connect(
-			cfg.RabbitMQURL,
-			cfg.RabbitMQRequestQueue,
-			cfg.RabbitMQResultExchange,
-			cfg.RabbitMQResultRoutingKey,
-			cfg.RabbitMQResultQueue,
-		)
+		amqpConn, err = connectAMQPWithRetry(cfg, 5, 2*time.Second)
 		if err != nil {
-			log.Printf("amqp: no se pudo conectar, IA deshabilitada: %v", err)
+			log.Printf("amqp: no se pudo conectar tras reintentos, IA deshabilitada: %v", err)
 		} else {
 			defer amqpConn.Close()
 			publisher = queue.NewPublisher(amqpConn.Channel, cfg.RabbitMQRequestQueue)
@@ -97,4 +92,26 @@ func loadLocalEnv() {
 			return
 		}
 	}
+}
+
+func connectAMQPWithRetry(cfg *config.Config, maxAttempts int, delay time.Duration) (*queue.Connection, error) {
+	var lastErr error
+	for i := range maxAttempts {
+		if i > 0 {
+			time.Sleep(delay)
+		}
+		conn, err := queue.Connect(
+			cfg.RabbitMQURL,
+			cfg.RabbitMQResultExchange,
+			cfg.RabbitMQResultRoutingKey,
+			cfg.RabbitMQResultQueue,
+		)
+		if err == nil {
+			log.Printf("amqp: conectado en intento %d/%d", i+1, maxAttempts)
+			return conn, nil
+		}
+		lastErr = err
+		log.Printf("amqp: intento %d/%d falló: %v", i+1, maxAttempts, err)
+	}
+	return nil, lastErr
 }

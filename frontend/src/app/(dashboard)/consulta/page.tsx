@@ -18,6 +18,7 @@ import {
   Plus,
   Trash2,
   CalendarX,
+  BrainCircuit,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -73,6 +74,7 @@ const EMPTY_FORM = {
   talla_cm: "",
   examen_fisico: "",
   hallazgos_clinicos: "",
+  pre_diagnostico: "",
   diagnostico_cie10: "",
   diagnostico_principal: "",
   plan_manejo: "",
@@ -169,6 +171,7 @@ function ConsultaForm() {
       "presion_arterial",
       "examen_fisico",
       "hallazgos_clinicos",
+      "pre_diagnostico",
       "diagnostico_cie10",
       "diagnostico_principal",
       "plan_manejo",
@@ -518,6 +521,26 @@ function ConsultaForm() {
             value={form.hallazgos_clinicos}
             onChange={(e) => set("hallazgos_clinicos", e.target.value)}
             placeholder="Hallazgos destacados de la evaluación…"
+          />
+        </Field>
+      </Card>
+
+      {/* Pre-diagnóstico: impresión clínica inicial, requerida antes de usar IA */}
+      <Card className="flex flex-col gap-3 p-6">
+        <SectionTitle icon={BrainCircuit} title="Pre-diagnóstico" />
+        <p className="text-xs text-muted -mt-2">
+          Registra tu impresión clínica inicial antes de consultar cualquier
+          herramienta de apoyo diagnóstico por IA. Es un requisito para poder
+          solicitar o visualizar hallazgos de análisis IA sobre los exámenes de
+          esta consulta (RF-12).
+        </p>
+        <Field label="Pre-diagnóstico (impresión clínica inicial)">
+          <textarea
+            className={textareaClass}
+            rows={2}
+            value={form.pre_diagnostico}
+            onChange={(e) => set("pre_diagnostico", e.target.value)}
+            placeholder="Impresión diagnóstica inicial, antes de ver sugerencias de IA…"
           />
         </Field>
       </Card>

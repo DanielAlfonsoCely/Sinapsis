@@ -30,24 +30,31 @@ class LocalImageStore:
     Args:
         root_dir: Root directory where output artifacts are persisted, one
             subdirectory per study. Created on demand.
+        uploads_dir: Root directory where input images are stored.
     """
 
-    def __init__(self, root_dir: str) -> None:
+    def __init__(self, root_dir: str, uploads_dir: str = "/app/uploads") -> None:
         self._root_dir = Path(root_dir)
+        self._uploads_dir = Path(uploads_dir)
 
     def fetch(self, image_uri: str) -> str:
         """Materialise the referenced image locally and return its local path.
 
-        Accepts `file://` URIs and plain local paths. The image is not copied:
-        the local backend serves it in place.
+        Accepts `file://` URIs, plain local paths, or just filenames (which
+        are searched for in `uploads_dir`).
 
         Raises:
             ImageAccessError: Unsupported URI scheme or missing image.
         """
         local_path = self._to_local_path(image_uri)
+
+        # If it's just a filename, check the uploads directory
+        if local_path.name == image_uri and not local_path.is_absolute():
+            local_path = self._uploads_dir / local_path
+
         if not local_path.is_file():
-            raise ImageAccessError(f"Image not found at URI {image_uri!r}")
-        logger.info("Image fetched: uri=%s", image_uri)
+            raise ImageAccessError(f"Image not found at path {local_path!r} (uri={image_uri!r})")
+        logger.info("Image fetched: path=%s", local_path)
         return str(local_path)
 
     def save_artifact(self, study_id: str, artifact_type: str, local_path: str) -> str:

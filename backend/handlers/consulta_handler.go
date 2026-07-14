@@ -131,7 +131,7 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 			presion_arterial, frecuencia_cardiaca, frecuencia_respiratoria,
 			temperatura, saturacion_oxigeno, peso_kg, talla_cm,
 			diagnostico_principal, diagnostico_cie10, plan_manejo,
-			procedimientos_indicados, observaciones_medico,
+			procedimientos_indicados, observaciones_medico, pre_diagnostico,
 			proxima_cita, fecha_consulta, estado_consulta
 		) VALUES (
 			$1, $2, $3,
@@ -140,8 +140,8 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 			$10, $11, $12,
 			$13, $14, $15, $16,
 			$17, $18, $19,
-			$20, $21,
-			$22, NOW(), 'completada'
+			$20, $21, $22,
+			$23, NOW(), 'completada'
 		) RETURNING id, fecha_consulta`,
 		historiaClinicaID, pacienteID, medicoID,
 		req.TipoConsulta, req.MotivoConsulta, req.Anamnesis, req.RevisionSistemas,
@@ -149,7 +149,7 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 		req.PresionArterial, req.FrecuenciaCardiaca, req.FrecuenciaRespiratoria,
 		req.Temperatura, req.SaturacionOxigeno, req.PesoKg, req.TallaCm,
 		req.DiagnosticoPrincipal, req.DiagnosticoCIE10, req.PlanManejo,
-		req.ProcedimientosIndicados, req.ObservacionesMedico,
+		req.ProcedimientosIndicados, req.ObservacionesMedico, req.PreDiagnostico,
 		proximaCita,
 	).Scan(&consultaID, &fechaConsulta)
 	if err != nil {
@@ -211,6 +211,69 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 	})
 }
 
+// UpdatePreDiagnostico maneja PATCH /api/v1/consultas/:id/pre-diagnostico.
+//
+// RF-12/RN-007: el médico debe registrar su propia impresión clínica (pre-
+// diagnóstico) ANTES de poder solicitar o visualizar hallazgos de análisis IA
+// sobre los exámenes de esta consulta. Solo el médico que atendió la consulta
+// puede registrarlo.
+func (h *ConsultaHandler) UpdatePreDiagnostico(c *gin.Context) {
+	userIDRaw, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+	userID, err := uuid.Parse(userIDRaw.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+		return
+	}
+
+	consultaID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid consulta id"})
+		return
+	}
+
+	var req models.UpdatePreDiagnosticoRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := context.Background()
+
+	var medicoID uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`SELECT id FROM medico WHERE usuario_id = $1`, userID,
+	).Scan(&medicoID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede registrar el pre-diagnóstico"})
+			return
+		}
+		log.Printf("update pre_diagnostico lookup medico error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
+		return
+	}
+
+	tag, err := h.pool.Exec(ctx,
+		`UPDATE consulta SET pre_diagnostico = $1
+		  WHERE id = $2 AND medico_id = $3`,
+		req.PreDiagnostico, consultaID, medicoID,
+	)
+	if err != nil {
+		log.Printf("update pre_diagnostico error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update pre-diagnóstico"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "consulta no encontrada o no autorizada"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"id": consultaID, "pre_diagnostico": req.PreDiagnostico})
+}
+
 // ListByPaciente maneja GET /api/v1/pacientes/:id/consultas (HU-04).
 // Devuelve el historial de consultas del paciente, de la más reciente a la más
 // antigua, incluyendo el médico que atendió cada consulta.
@@ -228,14 +291,28 @@ func (h *ConsultaHandler) ListByPaciente(c *gin.Context) {
 		        c.presion_arterial, c.frecuencia_cardiaca, c.frecuencia_respiratoria,
 		        c.temperatura, c.saturacion_oxigeno, c.peso_kg, c.talla_cm,
 		        c.diagnostico_principal, c.diagnostico_cie10, c.plan_manejo,
-		        c.procedimientos_indicados, c.observaciones_medico,
+		        c.procedimientos_indicados, c.observaciones_medico, c.pre_diagnostico,
 		        c.proxima_cita, c.fecha_consulta, c.estado_consulta,
 		        u.nombre_usuario, u.apellidos, m.especialidad,
 		        COALESCE((
 		          SELECT json_agg(json_build_object('id', e.id, 'nombre', e.descripcion, 'tipo', e.tipo_examen)
 		                          ORDER BY e.fecha_carga)
 		          FROM examinagen e WHERE e.consulta_id = c.id
-		        ), '[]') AS anexos
+		        ), '[]') AS anexos,
+		        COALESCE((
+		          SELECT json_agg(json_build_object(
+		                   'id', s.id,
+		                   'examinagen_id', s.examinagen_id,
+		                   'modelo_ia_utilizado', s.modelo_ia_utilizado,
+		                   'estado_procesamiento', s.estado_procesamiento,
+		                   'diagnostico_sugerido', s.diagnostico_sugerido,
+		                   'descripcion_hallazgo', s.descripcion_hallazgo,
+		                   'estado_revision', s.estado_revision
+		                 ) ORDER BY s.fecha_analisis DESC)
+		          FROM sugerencia_ia s
+		          JOIN examinagen ex ON ex.id = s.examinagen_id
+		          WHERE ex.consulta_id = c.id
+		        ), '[]') AS sugerencias_ia
 		 FROM consulta c
 		 JOIN medico m ON m.id = c.medico_id
 		 JOIN usuario u ON u.id = m.usuario_id
@@ -254,16 +331,16 @@ func (h *ConsultaHandler) ListByPaciente(c *gin.Context) {
 	for rows.Next() {
 		var item models.ConsultaListItem
 		var nombre, apellidos string
-		var anexosJSON []byte
+		var anexosJSON, sugerenciasJSON []byte
 		if err := rows.Scan(
 			&item.ID, &item.TipoConsulta, &item.MotivoConsulta, &item.Anamnesis, &item.RevisionSistemas,
 			&item.ExamenFisico, &item.HallazgosClinicos,
 			&item.PresionArterial, &item.FrecuenciaCardiaca, &item.FrecuenciaRespiratoria,
 			&item.Temperatura, &item.SaturacionOxigeno, &item.PesoKg, &item.TallaCm,
 			&item.DiagnosticoPrincipal, &item.DiagnosticoCIE10, &item.PlanManejo,
-			&item.ProcedimientosIndicados, &item.ObservacionesMedico,
+			&item.ProcedimientosIndicados, &item.ObservacionesMedico, &item.PreDiagnostico,
 			&item.ProximaCita, &item.FechaConsulta, &item.EstadoConsulta,
-			&nombre, &apellidos, &item.MedicoEspecialidad, &anexosJSON,
+			&nombre, &apellidos, &item.MedicoEspecialidad, &anexosJSON, &sugerenciasJSON,
 		); err != nil {
 			log.Printf("scan consulta error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read consultas"})
@@ -272,6 +349,9 @@ func (h *ConsultaHandler) ListByPaciente(c *gin.Context) {
 		item.MedicoNombre = nombre + " " + apellidos
 		if err := json.Unmarshal(anexosJSON, &item.Anexos); err != nil {
 			item.Anexos = []models.AnexoItem{}
+		}
+		if err := json.Unmarshal(sugerenciasJSON, &item.SugerenciasIA); err != nil {
+			item.SugerenciasIA = []models.SugerenciaIAItem{}
 		}
 		consultas = append(consultas, item)
 	}

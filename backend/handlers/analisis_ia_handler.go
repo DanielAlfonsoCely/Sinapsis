@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,9 +20,9 @@ import (
 
 // AnalisisIAHandler gestiona los tres endpoints del módulo de análisis IA:
 //
-//   POST   /api/v1/examenes/:id/analisis-ia   — solicitar análisis
-//   GET    /api/v1/sugerencias-ia/:id          — consultar estado/resultado
-//   PATCH  /api/v1/sugerencias-ia/:id/revision — revisión médica
+//	POST   /api/v1/examenes/:id/analisis-ia   — solicitar análisis
+//	GET    /api/v1/sugerencias-ia/:id          — consultar estado/resultado
+//	PATCH  /api/v1/sugerencias-ia/:id/revision — revisión médica
 type AnalisisIAHandler struct {
 	pool      *pgxpool.Pool
 	publisher *queue.Publisher // nil si RABBITMQ_URL no está configurado
@@ -102,11 +103,12 @@ func (h *AnalisisIAHandler) SolicitarAnalisis(c *gin.Context) {
 	// Leer el examen: debe existir, pertenecer a este médico y tener imagen.
 	var pacienteID, historiaClinicaID uuid.UUID
 	var urlImagen *string
+	var consultaID *uuid.UUID
 	err = h.pool.QueryRow(ctx, `
-		SELECT paciente_id, historia_clinica_id, url_imagen
+		SELECT paciente_id, historia_clinica_id, url_imagen, consulta_id
 		FROM examinagen
 		WHERE id = $1 AND medico_solicitante_id = $2
-	`, examinagenID, medicoID).Scan(&pacienteID, &historiaClinicaID, &urlImagen)
+	`, examinagenID, medicoID).Scan(&pacienteID, &historiaClinicaID, &urlImagen, &consultaID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "examen no encontrado o no autorizado"})
@@ -118,6 +120,33 @@ func (h *AnalisisIAHandler) SolicitarAnalisis(c *gin.Context) {
 	}
 	if urlImagen == nil || *urlImagen == "" {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "el examen no tiene imagen asociada"})
+		return
+	}
+
+	// RF-12/RN-007: el médico debe registrar su propio pre-diagnóstico en la
+	// consulta ANTES de poder solicitar análisis IA -- evita que la sugerencia
+	// del modelo sesgue la impresión clínica inicial del médico.
+	if consultaID == nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": "el examen no está asociado a una consulta",
+			"code":  "consulta_required",
+		})
+		return
+	}
+	var preDiagnostico *string
+	if err := h.pool.QueryRow(ctx,
+		`SELECT pre_diagnostico FROM consulta WHERE id = $1`, *consultaID,
+	).Scan(&preDiagnostico); err != nil {
+		log.Printf("analisis_ia lookup pre_diagnostico: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify pre-diagnóstico"})
+		return
+	}
+	if preDiagnostico == nil || strings.TrimSpace(*preDiagnostico) == "" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":       "debe registrar un pre-diagnóstico en la consulta antes de solicitar el análisis IA (RF-12)",
+			"code":        "pre_diagnostico_required",
+			"consulta_id": consultaID,
+		})
 		return
 	}
 
@@ -217,15 +246,18 @@ func (h *AnalisisIAHandler) GetSugerencia(c *gin.Context) {
 			s.estado_procesamiento, s.modelo_ia_utilizado,
 			s.confianza_prediccion, s.descripcion_hallazgo, s.diagnostico_sugerido,
 			s.metricas, s.fecha_analisis,
-			s.estado_revision, s.observaciones_medico, s.fecha_revision, s.medico_revisor_id
+			s.estado_revision, s.observaciones_medico, s.fecha_revision, s.medico_revisor_id,
+			e.consulta_id, co.pre_diagnostico
 		FROM sugerencia_ia s
 		JOIN examinagen e ON e.id = s.examinagen_id
+		LEFT JOIN consulta co ON co.id = e.consulta_id
 		WHERE s.id = $1 AND e.medico_solicitante_id = $2
 	`, sugerenciaID, medicoID)
 
 	var resp models.SugerenciaIAResponse
-	var requestID, correlationID, medicoRevisorID *uuid.UUID
+	var requestID, correlationID, medicoRevisorID, consultaID *uuid.UUID
 	var metricasRaw []byte
+	var preDiagnostico *string
 
 	err = row.Scan(
 		&resp.ID, &resp.ExaminagenID, &resp.HistoriaClinicaID,
@@ -234,6 +266,7 @@ func (h *AnalisisIAHandler) GetSugerencia(c *gin.Context) {
 		&resp.ConfianzaPrediccion, &resp.DescripcionHallazgo, &resp.DiagnosticoSugerido,
 		&metricasRaw, &resp.FechaAnalisis,
 		&resp.EstadoRevision, &resp.ObservacionesMedico, &resp.FechaRevision, &medicoRevisorID,
+		&consultaID, &preDiagnostico,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -257,10 +290,25 @@ func (h *AnalisisIAHandler) GetSugerencia(c *gin.Context) {
 		s := medicoRevisorID.String()
 		resp.MedicoRevisorID = &s
 	}
+	if consultaID != nil {
+		s := consultaID.String()
+		resp.ConsultaID = &s
+	}
 	if len(metricasRaw) > 0 {
 		if err := json.Unmarshal(metricasRaw, &resp.Metricas); err != nil {
 			log.Printf("analisis_ia unmarshal metricas: %v", err)
 		}
+	}
+
+	// RF-12/RN-007: sin pre-diagnóstico registrado en la consulta, se oculta el
+	// contenido clínico generado por el modelo (el estado de procesamiento para
+	// el polling se mantiene visible).
+	resp.PreDiagnosticoRegistrado = preDiagnostico != nil && strings.TrimSpace(*preDiagnostico) != ""
+	if !resp.PreDiagnosticoRegistrado {
+		resp.ConfianzaPrediccion = nil
+		resp.DescripcionHallazgo = nil
+		resp.DiagnosticoSugerido = nil
+		resp.Metricas = nil
 	}
 
 	c.JSON(http.StatusOK, resp)
@@ -341,7 +389,7 @@ func (h *AnalisisIAHandler) Revision(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":             sugerenciaID,
+		"id":              sugerenciaID,
 		"estado_revision": req.EstadoRevision,
 	})
 }

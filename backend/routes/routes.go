@@ -86,6 +86,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 		{
 			consultas.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.consulta.Create)
 			consultas.POST("/:id/anexos", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.anexo.Create)
+			consultas.PATCH("/:id/pre-diagnostico", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.consulta.UpdatePreDiagnostico)
 		}
 
 		api.GET("/anexos/:id/archivo", middleware.RequireAuth(cfg), h.anexo.Serve)

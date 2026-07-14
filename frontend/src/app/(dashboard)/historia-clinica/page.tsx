@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronLeft,
   Stethoscope,
@@ -19,6 +19,7 @@ import {
   ImageIcon,
   FileDown,
   Loader2,
+  BrainCircuit,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -37,6 +38,16 @@ type Paciente = {
   tiene_cita_hoy: boolean;
 };
 
+type SugerenciaIAResumen = {
+  id: string;
+  examinagen_id: string;
+  modelo_ia_utilizado: string;
+  estado_procesamiento: "enviado" | "completado" | "fallido";
+  diagnostico_sugerido: string | null;
+  descripcion_hallazgo: string | null;
+  estado_revision: "pendiente" | "revisada" | "rechazada";
+};
+
 type Consulta = {
   id: string;
   tipo_consulta: string | null;
@@ -45,6 +56,8 @@ type Consulta = {
   revision_sistemas: string | null;
   examen_fisico: string | null;
   hallazgos_clinicos: string | null;
+  // Impresión clínica inicial del médico, requerida antes de usar IA (RF-12).
+  pre_diagnostico: string | null;
   presion_arterial: string | null;
   frecuencia_cardiaca: number | null;
   frecuencia_respiratoria: number | null;
@@ -63,6 +76,7 @@ type Consulta = {
   medico_nombre: string;
   medico_especialidad: string;
   anexos: { id: string; nombre: string; tipo: string }[];
+  sugerencias_ia: SugerenciaIAResumen[];
 };
 
 type Medicamento = {
@@ -111,6 +125,7 @@ function formatDateTime(iso: string) {
 }
 
 function HistoriaClinica() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const pacienteId = searchParams.get("paciente");
   const consultaParam = searchParams.get("consulta"); // deep-link desde una fórmula
@@ -422,6 +437,23 @@ function HistoriaClinica() {
                   {open && (
                     <div className="flex flex-col gap-4 border-t border-line bg-shell px-5 py-4 text-sm">
                       <DetailRow label="Motivo de consulta" value={c.motivo_consulta} />
+
+                      {/* Pre-diagnóstico: impresión clínica inicial del médico,
+                          registrada ANTES de usar cualquier herramienta de IA (RF-12). */}
+                      {c.pre_diagnostico && (
+                        <div className="flex items-start gap-2 rounded-[var(--radius)] border border-teal/25 bg-teal/5 p-3">
+                          <BrainCircuit className="size-4 shrink-0 text-teal mt-0.5" />
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.6px] text-teal">
+                              Pre-diagnóstico (impresión clínica inicial)
+                            </p>
+                            <p className="mt-0.5 whitespace-pre-wrap leading-relaxed text-slate">
+                              {c.pre_diagnostico}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
                       <DetailRow label="Enfermedad actual / Anamnesis" value={c.anamnesis} />
                       <DetailRow label="Revisión por sistemas" value={c.revision_sistemas} />
 
@@ -477,20 +509,86 @@ function HistoriaClinica() {
                             Anexos ({c.anexos.length})
                           </p>
                           <div className="flex flex-wrap gap-2">
-                            {c.anexos.map((a) => (
-                              <button
-                                key={a.id}
-                                type="button"
-                                onClick={() => verAnexo(a.id)}
-                                className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-teal/30 bg-teal/5 px-3 py-1.5 text-xs font-medium text-teal hover:bg-teal/10"
+                              {c.anexos.map((a) => (
+                              <div key={a.id} className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => verAnexo(a.id)}
+                                  className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-teal/30 bg-teal/5 px-3 py-1.5 text-xs font-medium text-teal hover:bg-teal/10"
+                                >
+                                  {a.tipo === "imagen" ? (
+                                    <ImageIcon className="size-3.5" />
+                                  ) : (
+                                    <FileText className="size-3.5" />
+                                  )}
+                                  Ver {a.nombre}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => router.push(`/analisis-ia?examinagenId=${a.id}`)}
+                                  className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-navylight/30 bg-navylight/5 px-3 py-1.5 text-xs font-medium text-ink hover:bg-navylight/10"
+                                >
+                                  <BrainCircuit className="size-3.5" />
+                                  IA
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Sugerencias de análisis IA sobre exámenes de esta consulta.
+                          Aquí queda visible el resultado de "usar la sugerencia"
+                          (marcarla como revisada) desde la pantalla de análisis IA. */}
+                      {c.sugerencias_ia.length > 0 && (
+                        <div>
+                          <p className="mb-1.5 flex items-center gap-1 text-xs uppercase tracking-[0.6px] text-label">
+                            <BrainCircuit className="size-3" />
+                            Sugerencias de IA ({c.sugerencias_ia.length})
+                          </p>
+                          <div className="flex flex-col gap-2">
+                            {c.sugerencias_ia.map((s) => (
+                              <Link
+                                key={s.id}
+                                href={`/analisis-ia?id=${s.id}`}
+                                className="flex flex-col gap-1 rounded-[var(--radius)] border border-line bg-white p-3 transition-colors hover:border-teal/40"
                               >
-                                {a.tipo === "imagen" ? (
-                                  <ImageIcon className="size-3.5" />
-                                ) : (
-                                  <FileText className="size-3.5" />
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-xs font-medium text-ink">
+                                    {s.modelo_ia_utilizado || "Modelo IA"}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    {s.estado_procesamiento === "enviado" && (
+                                      <Badge tone="info">Procesando</Badge>
+                                    )}
+                                    {s.estado_procesamiento === "fallido" && (
+                                      <Badge tone="danger">Falló</Badge>
+                                    )}
+                                    {s.estado_procesamiento === "completado" && (
+                                      <Badge
+                                        tone={
+                                          s.estado_revision === "revisada"
+                                            ? "success"
+                                            : s.estado_revision === "rechazada"
+                                            ? "danger"
+                                            : "warning"
+                                        }
+                                      >
+                                        {s.estado_revision === "revisada"
+                                          ? "Revisada por el médico"
+                                          : s.estado_revision === "rechazada"
+                                          ? "Rechazada"
+                                          : "Pendiente de revisión"}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                {s.diagnostico_sugerido && (
+                                  <p className="text-sm text-slate">
+                                    {s.diagnostico_sugerido}
+                                  </p>
                                 )}
-                                Ver {a.nombre}
-                              </button>
+                              </Link>
                             ))}
                           </div>
                         </div>

@@ -24,7 +24,10 @@ type Connection struct {
 
 // Connect establece la conexión AMQP, abre un canal y declara la topología
 // necesaria para el flujo backend ↔ microservicio IA.
-func Connect(url, requestQueue, resultExchange, resultRoutingKey, resultQueue string) (*Connection, error) {
+//
+// Nota: la cola de solicitudes (ai.analysis.requests) la declara el microservicio
+// Python con su DLX; el backend solo publica en ella sin declararla.
+func Connect(url, resultExchange, resultRoutingKey, resultQueue string) (*Connection, error) {
 	conn, err := amqp.Dial(url)
 	if err != nil {
 		return nil, fmt.Errorf("amqp dial: %w", err)
@@ -34,20 +37,6 @@ func Connect(url, requestQueue, resultExchange, resultRoutingKey, resultQueue st
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("amqp channel: %w", err)
-	}
-
-	// Cola de solicitudes (el backend publica aquí; el microservicio consume).
-	if _, err := ch.QueueDeclare(
-		requestQueue,
-		true,  // durable
-		false, // auto-delete
-		false, // exclusive
-		false, // no-wait
-		nil,
-	); err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("declare request queue %q: %w", requestQueue, err)
 	}
 
 	// Exchange de resultados (el microservicio publica aquí; el backend consume).

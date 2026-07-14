@@ -140,7 +140,10 @@ def main() -> None:
         cache_dir=settings.bundle_cache_dir,
         source=settings.bundle_source,
     )
-    image_store = LocalImageStore(root_dir=settings.bundle_cache_dir)
+    image_store = LocalImageStore(
+        root_dir=settings.bundle_cache_dir,
+        uploads_dir="/app/uploads"
+    )
     inference_engine = MonaiInferenceEngine(device=settings.model_device)
     publisher = RabbitMQPublisher(
         channel=channel,

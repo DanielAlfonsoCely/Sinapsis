@@ -38,12 +38,25 @@ type CreateConsultaRequest struct {
 	ProcedimientosIndicados *string `json:"procedimientos_indicados"`
 	ObservacionesMedico     *string `json:"observaciones_medico"`
 
+	// PreDiagnostico es la impresión clínica inicial del médico, registrada
+	// ANTES de ver cualquier sugerencia de IA (RF-12/RN-007). Es opcional al
+	// crear la consulta -- puede completarse después vía
+	// PATCH /consultas/:id/pre-diagnostico, pero es obligatorio antes de
+	// solicitar o visualizar hallazgos de análisis IA.
+	PreDiagnostico *string `json:"pre_diagnostico"`
+
 	ProximaCita *string `json:"proxima_cita"` // YYYY-MM-DD, opcional
 
 	// Fórmula médica emitida durante la consulta (HU-06). Opcional: si viene con
 	// medicamentos, se registra en la misma transacción, ligada a esta consulta.
 	Medicamentos        []Medicamento `json:"medicamentos" binding:"omitempty,dive"`
 	FormulaIndicaciones *string       `json:"formula_indicaciones"`
+}
+
+// UpdatePreDiagnosticoRequest es el payload para registrar/actualizar el
+// pre-diagnóstico de una consulta ya creada (RF-12/RN-007).
+type UpdatePreDiagnosticoRequest struct {
+	PreDiagnostico string `json:"pre_diagnostico" binding:"required"`
 }
 
 // ConsultaListItem es cada entrada de la historia clínica de un paciente (HU-04),
@@ -72,6 +85,7 @@ type ConsultaListItem struct {
 	PlanManejo              *string `json:"plan_manejo"`
 	ProcedimientosIndicados *string `json:"procedimientos_indicados"`
 	ObservacionesMedico     *string `json:"observaciones_medico"`
+	PreDiagnostico          *string `json:"pre_diagnostico"`
 
 	ProximaCita    *time.Time `json:"proxima_cita"`
 	FechaConsulta  time.Time  `json:"fecha_consulta"`
@@ -80,7 +94,8 @@ type ConsultaListItem struct {
 	MedicoNombre       string `json:"medico_nombre"`
 	MedicoEspecialidad string `json:"medico_especialidad"`
 
-	Anexos []AnexoItem `json:"anexos"`
+	Anexos        []AnexoItem        `json:"anexos"`
+	SugerenciasIA []SugerenciaIAItem `json:"sugerencias_ia"`
 }
 
 // AnexoItem es un resultado/imagen adjunto a una consulta (HU-07).
@@ -88,4 +103,18 @@ type AnexoItem struct {
 	ID     string `json:"id"`
 	Nombre string `json:"nombre"`
 	Tipo   string `json:"tipo"`
+}
+
+// SugerenciaIAItem es el resumen de una sugerencia de análisis IA asociada a
+// un examen de esta consulta, para mostrarla en la historia clínica -- así el
+// resultado de "usar la sugerencia" (marcarla como revisada) queda visible en
+// el expediente, no solo en la pantalla de análisis IA.
+type SugerenciaIAItem struct {
+	ID                  string  `json:"id"`
+	ExaminagenID        string  `json:"examinagen_id"`
+	ModeloIAUtilizado   string  `json:"modelo_ia_utilizado"`
+	EstadoProcesamiento string  `json:"estado_procesamiento"`
+	DiagnosticoSugerido *string `json:"diagnostico_sugerido"`
+	DescripcionHallazgo *string `json:"descripcion_hallazgo"`
+	EstadoRevision      string  `json:"estado_revision"`
 }

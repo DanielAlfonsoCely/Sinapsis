@@ -8,10 +8,10 @@ import "time"
 type AnalysisType string
 
 const (
-	AnalysisTypeSpleenSegmentation   AnalysisType = "ct_spleen_segmentation"
-	AnalysisTypeLungNodule           AnalysisType = "ct_lung_nodule_detection"
-	AnalysisTypeBrainTumor           AnalysisType = "mri_brain_tumor_segmentation"
-	AnalysisTypeBreastDensity        AnalysisType = "xr_breast_density_classification"
+	AnalysisTypeSpleenSegmentation AnalysisType = "ct_spleen_segmentation"
+	AnalysisTypeLungNodule         AnalysisType = "ct_lung_nodule_detection"
+	AnalysisTypeBrainTumor         AnalysisType = "mri_brain_tumor_segmentation"
+	AnalysisTypeBreastDensity      AnalysisType = "xr_breast_density_classification"
 )
 
 // AnalysisRequest es el mensaje que el backend publica a la cola
@@ -62,23 +62,31 @@ type SolicitarAnalisisRequest struct {
 }
 
 // SugerenciaIAResponse es la respuesta de GET /api/v1/sugerencias-ia/:id.
+//
+// RF-12/RN-007: si la consulta ligada al examen no tiene pre_diagnostico
+// registrado, PreDiagnosticoRegistrado viene en false y los campos de
+// hallazgo del modelo (ConfianzaPrediccion, DescripcionHallazgo,
+// DiagnosticoSugerido, Metricas) se omiten -- el estado de procesamiento
+// (para el polling) sigue visible, pero el contenido clínico de la IA no.
 type SugerenciaIAResponse struct {
-	ID                   string         `json:"id"`
-	ExaminagenID         string         `json:"examinagen_id"`
-	HistoriaClinicaID    string         `json:"historia_clinica_id"`
-	RequestID            *string        `json:"request_id,omitempty"`
-	CorrelationID        *string        `json:"correlation_id,omitempty"`
-	EstadoProcesamiento  string         `json:"estado_procesamiento"`
-	ModeloIAUtilizado    string         `json:"modelo_ia_utilizado"`
-	ConfianzaPrediccion  *float64       `json:"confianza_prediccion,omitempty"`
-	DescripcionHallazgo  *string        `json:"descripcion_hallazgo,omitempty"`
-	DiagnosticoSugerido  *string        `json:"diagnostico_sugerido,omitempty"`
-	Metricas             map[string]any `json:"metricas,omitempty"`
-	FechaAnalisis        *time.Time     `json:"fecha_analisis,omitempty"`
-	EstadoRevision       string         `json:"estado_revision"`
-	ObservacionesMedico  *string        `json:"observaciones_medico,omitempty"`
-	FechaRevision        *time.Time     `json:"fecha_revision,omitempty"`
-	MedicoRevisorID      *string        `json:"medico_revisor_id,omitempty"`
+	ID                       string         `json:"id"`
+	ExaminagenID             string         `json:"examinagen_id"`
+	ConsultaID               *string        `json:"consulta_id,omitempty"`
+	HistoriaClinicaID        string         `json:"historia_clinica_id"`
+	RequestID                *string        `json:"request_id,omitempty"`
+	CorrelationID            *string        `json:"correlation_id,omitempty"`
+	EstadoProcesamiento      string         `json:"estado_procesamiento"`
+	ModeloIAUtilizado        string         `json:"modelo_ia_utilizado"`
+	PreDiagnosticoRegistrado bool           `json:"pre_diagnostico_registrado"`
+	ConfianzaPrediccion      *float64       `json:"confianza_prediccion,omitempty"`
+	DescripcionHallazgo      *string        `json:"descripcion_hallazgo,omitempty"`
+	DiagnosticoSugerido      *string        `json:"diagnostico_sugerido,omitempty"`
+	Metricas                 map[string]any `json:"metricas,omitempty"`
+	FechaAnalisis            *time.Time     `json:"fecha_analisis,omitempty"`
+	EstadoRevision           string         `json:"estado_revision"`
+	ObservacionesMedico      *string        `json:"observaciones_medico,omitempty"`
+	FechaRevision            *time.Time     `json:"fecha_revision,omitempty"`
+	MedicoRevisorID          *string        `json:"medico_revisor_id,omitempty"`
 }
 
 // RevisionRequest es el body del endpoint

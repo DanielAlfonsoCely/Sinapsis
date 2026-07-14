@@ -26,11 +26,25 @@ func NewAnexoHandler(pool *pgxpool.Pool, uploadsDir string) *AnexoHandler {
 // categoriaPorExt clasifica el anexo como imagen o documento para la UI.
 func categoriaPorExt(ext string) string {
 	switch strings.ToLower(ext) {
-	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".dcm":
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".dcm", ".nii", ".nii.gz":
 		return "imagen"
 	default:
 		return "documento"
 	}
+}
+
+// extensionCompuesta detecta extensiones de dos partes usadas por formatos de
+// imagen médica (p.ej. "estudio.nii.gz" → ".nii.gz"). filepath.Ext solo
+// captura el último componente (".gz"), lo que le hace perder la extensión
+// ".nii" que MONAI/Nibabel necesitan para reconocer el formato NIfTI.
+func extensionCompuesta(filename string) string {
+	lower := strings.ToLower(filename)
+	for _, suffix := range []string{".nii.gz", ".tar.gz"} {
+		if strings.HasSuffix(lower, suffix) {
+			return filename[len(filename)-len(suffix):]
+		}
+	}
+	return filepath.Ext(filename)
 }
 
 // Create maneja POST /api/v1/consultas/:id/anexos (multipart, HU-07).
@@ -95,8 +109,10 @@ func (h *AnexoHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Nombre de archivo en disco: <uuid><ext> (conserva la extensión original).
-	ext := filepath.Ext(fileHeader.Filename)
+	// Nombre de archivo en disco: <uuid><ext> (conserva la extensión original,
+	// incluidas las compuestas como .nii.gz que MONAI necesita para reconocer
+	// el formato NIfTI).
+	ext := extensionCompuesta(fileHeader.Filename)
 	storedName := uuid.NewString() + ext
 	destPath := filepath.Join(h.uploadsDir, storedName)
 	if err := c.SaveUploadedFile(fileHeader, destPath); err != nil {
