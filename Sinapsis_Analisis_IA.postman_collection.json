@@ -8,6 +8,65 @@
   },
   "item": [
     {
+      "name": "0. Login (Obtener Token)",
+      "id": "e1f2a3b4-c5d6-4789-e012-f3a4b5c6d7e9",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "packages": {},
+            "exec": [
+              "pm.test('Status code es 200 (OK)', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response contiene token', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('token');",
+              "    pm.expect(jsonData).to.have.property('usuario');",
+              "});",
+              "",
+              "// Guardar el token automaticamente para los siguientes requests",
+              "if (pm.response.code === 200) {",
+              "    var jsonData = pm.response.json();",
+              "    pm.collectionVariables.set('token', jsonData.token);",
+              "    pm.environment.set('token', jsonData.token);",
+              "    console.log('Token guardado. Tipo de usuario: ' + jsonData.usuario.tipo_usuario);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{medico_email}}\",\n  \"contrasena\": \"{{medico_password}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/auth/login",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "login"
+          ]
+        },
+        "description": "Autentica a un médico y devuelve el token JWT necesario para los demás endpoints.\n\n**Equivalente curl:**\n```bash\ncurl -X POST http://localhost:8080/api/v1/auth/login \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"email\": \"medico@sinapsis.com\",\n    \"contrasena\": \"tu_password\"\n  }'\n```\n\n**Request Body:**\n- `email` (string, requerido): correo del usuario\n- `contrasena` (string, requerido): contraseña del usuario\n\n**Response (200):**\n```json\n{\n  \"token\": \"eyJhbGciOiJIUzI1NiIs...\",\n  \"usuario\": {\n    \"id\": \"uuid\",\n    \"nombre_usuario\": \"...\",\n    \"apellidos\": \"...\",\n    \"email\": \"...\",\n    \"tipo_usuario\": \"medico\",\n    \"especialidad\": \"...\",\n    \"entidad\": \"...\"\n  }\n}\n```\n\nEl token se guarda automáticamente en la variable `{{token}}` para usarse en los endpoints siguientes.\n\n**Errores posibles:**\n- `400` - Body inválido\n- `401` - Email o contraseña incorrectos"
+      }
+    },
+    {
       "name": "1. Solicitar Análisis IA",
       "id": "b1c2d3e4-f5a6-4789-b012-c3d4e5f6a7b8",
       "event": [
@@ -238,6 +297,18 @@
       "key": "token",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "medico_email",
+      "value": "medico@sinapsis.com",
+      "type": "string",
+      "description": "Email del médico para autenticarse (endpoint de Login)"
+    },
+    {
+      "key": "medico_password",
+      "value": "changeme",
+      "type": "string",
+      "description": "Contraseña del médico para autenticarse (endpoint de Login)"
     },
     {
       "key": "examen_id",

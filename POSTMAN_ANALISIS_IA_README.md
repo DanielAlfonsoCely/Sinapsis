@@ -1,6 +1,6 @@
 # Colección Postman - Módulo Análisis IA
 
-Esta colección permite probar los **3 endpoints** del módulo de análisis con IA integrado con el microservicio MONAI.
+Esta colección permite probar los **3 endpoints** del módulo de análisis con IA integrado con el microservicio MONAI, más un endpoint de **Login** para obtener el token JWT.
 
 ## 📋 Archivos
 
@@ -17,15 +17,27 @@ Esta colección permite probar los **3 endpoints** del módulo de análisis con 
 
 ### 2. Configurar Variables de Entorno
 
-La colección utiliza las siguientes variables que debes configurar:
+La colección utiliza las siguientes variables que debes configurar. Los valores por defecto ya apuntan a los **puertos expuestos por docker-compose.yml** en la raíz del proyecto:
 
-| Variable | Valor | Descripción |
+| Variable | Valor por defecto | Descripción |
 |----------|-------|-------------|
-| `base_url` | `http://localhost:8080` | URL del backend (ajusta si es diferente) |
-| `token` | `<tu_token_jwt>` | Token JWT obtenido al autenticarse |
-| `examen_id` | `<uuid>` | ID del examen para solicitar análisis |
-| `sugerencia_ia_id` | Auto-poblada | ID generado por el primer endpoint |
+| `base_url` | `http://localhost:8080` | URL del backend (puerto `8080:8080` mapeado en `docker-compose.yml`) |
+| `medico_email` | `medico@sinapsis.com` | Email del médico para el endpoint de Login |
+| `medico_password` | `changeme` | Contraseña del médico para el endpoint de Login |
+| `token` | Auto-poblada | Token JWT (se guarda automáticamente al ejecutar el request de Login) |
+| `examen_id` | `<uuid>` | ID del examen para solicitar análisis (debes completarlo manualmente) |
+| `sugerencia_ia_id` | Auto-poblada | ID generado por el endpoint "Solicitar Análisis IA" |
 | `request_id` | Auto-poblada | ID de solicitud RabbitMQ |
+
+**Otros puertos relevantes de docker-compose.yml (por si necesitas depurar):**
+
+| Servicio | Puerto host | Uso |
+|----------|-------------|-----|
+| `backend` | `8080` | API REST (usado como `base_url`) |
+| `postgres` | `5432` | Base de datos PostgreSQL |
+| `rabbitmq` | `5672` | Cola AMQP (comunicación backend ↔ microservicio IA) |
+| `rabbitmq` | `15672` | Management UI: http://localhost:15672 (guest/guest) |
+| `frontend` | `3000` | Aplicación Next.js |
 
 #### Opción A: Variables de Entorno en Postman
 
@@ -44,19 +56,72 @@ Si prefieres, puedes editar directamente en la colección:
 2. Click en la pestaña **Variables**
 3. Completa los valores (excepto `sugerencia_ia_id` y `request_id` que se auto-populan)
 
-## 🔐 Obtener Token JWT
+## 🔐 Obtener Token JWT (Login)
 
-Antes de ejecutar los endpoints, necesitas autenticarte:
+La colección incluye un request **"0. Login (Obtener Token)"** que se ejecuta antes que los demás. Al correrlo en Postman, su script de test guarda el token automáticamente en la variable `{{token}}`, así que **no necesitas copiarlo manualmente**.
 
-1. Usa tu endpoint de login (ej: `POST /api/v1/login`)
-2. Copia el token JWT de la respuesta
-3. Pégalo en la variable `token` de tu entorno/colección
+### Endpoint de Login
+
+**POST** `/api/v1/auth/login`
+
+**Request Body:**
+```json
+{
+  "email": "medico@sinapsis.com",
+  "contrasena": "tu_password"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "usuario": {
+    "id": "uuid",
+    "nombre_usuario": "...",
+    "apellidos": "...",
+    "email": "...",
+    "tipo_usuario": "medico",
+    "especialidad": "...",
+    "entidad": "..."
+  }
+}
+```
+
+### Curl equivalente (contra el backend en Docker, puerto 8080)
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "medico@sinapsis.com",
+    "contrasena": "tu_password"
+  }'
+```
+
+**Extraer solo el token con `jq` (útil para exportar como variable de shell):**
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "medico@sinapsis.com", "contrasena": "tu_password"}' \
+  | jq -r '.token')
+
+echo "Token: $TOKEN"
+```
+
+**Errores posibles:**
+- `400` - Body inválido (falta `email` o `contrasena`, o email mal formado)
+- `401` - Email o contraseña incorrectos
 
 ## 📝 Flujo de Pruebas
 
 ### Flujo Completo (Recomendado)
 
 ```
+0️⃣  Login (POST)
+    ↓
+    🔑 Guarda token automáticamente
+    ↓
 1️⃣  Solicitar Análisis IA (POST)
     ↓
     ✅ Genera sugerencia_ia_id automáticamente
@@ -102,6 +167,17 @@ Opciones:
   "request_id": "uuid-de-solicitud-rabbitmq",
   "estado": "enviado"
 }
+```
+
+### Curl equivalente
+
+```bash
+curl -X POST http://localhost:8080/api/v1/examenes/<EXAMEN_ID>/analisis-ia \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "analysis_type": "ct_spleen_segmentation"
+  }'
 ```
 
 **Posibles Errores:**
@@ -161,6 +237,19 @@ Intervalo sugerido: 2-5 segundos
 Timeout máximo: 5-10 minutos (depende del modelo)
 ```
 
+### Curl equivalente
+
+```bash
+curl -X GET http://localhost:8080/api/v1/sugerencias-ia/<SUGERENCIA_ID> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Polling con curl (repetir cada pocos segundos):**
+```bash
+watch -n 3 "curl -s http://localhost:8080/api/v1/sugerencias-ia/<SUGERENCIA_ID> \
+  -H 'Authorization: Bearer $TOKEN' | jq '.estado_procesamiento'"
+```
+
 ---
 
 #### 3️⃣ **PATCH** `/api/v1/sugerencias-ia/:id/revision`
@@ -191,11 +280,58 @@ Timeout máximo: 5-10 minutos (depende del modelo)
 }
 ```
 
+### Curl equivalente
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/sugerencias-ia/<SUGERENCIA_ID>/revision \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "estado_revision": "revisada",
+    "observaciones_medico": "Resultados consistentes con evaluacion clinica"
+  }'
+```
+
 ---
 
 ## 🧪 Casos de Prueba
 
-### Caso 1: Flujo Exitoso Completo
+### Caso 1: Flujo Exitoso Completo (con curl y jq)
+
+Script completo usando `curl` + `jq` para encadenar los 4 endpoints en la terminal (asume backend en Docker, puerto `8080`):
+
+```bash
+BASE_URL="http://localhost:8080"
+EXAMEN_ID="<uuid-del-examen>"
+
+# 0. Login - obtener token
+TOKEN=$(curl -s -X POST "$BASE_URL/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "medico@sinapsis.com", "contrasena": "tu_password"}' \
+  | jq -r '.token')
+echo "Token obtenido: ${TOKEN:0:20}..."
+
+# 1. Solicitar análisis
+SUGERENCIA_ID=$(curl -s -X POST "$BASE_URL/api/v1/examenes/$EXAMEN_ID/analisis-ia" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"analysis_type": "ct_spleen_segmentation"}' \
+  | jq -r '.id')
+echo "Sugerencia IA solicitada. ID: $SUGERENCIA_ID"
+
+# 2. Consultar estado (repetir hasta "completado")
+curl -s "$BASE_URL/api/v1/sugerencias-ia/$SUGERENCIA_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq '.'
+
+# 3. Revisar análisis (una vez completado)
+curl -s -X PATCH "$BASE_URL/api/v1/sugerencias-ia/$SUGERENCIA_ID/revision" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"estado_revision": "revisada", "observaciones_medico": "Aprobado"}' \
+  | jq '.'
+```
+
+**Resultado esperado paso a paso:**
 
 ```bash
 # 1. Solicitar análisis
@@ -286,9 +422,12 @@ Body: {
 
 ## 📚 Referencias
 
-- **Backend Models:** `backend/models/analisis_ia.go`
-- **Handler:** `backend/handlers/analisis_ia_handler.go`
+- **Backend Models (Análisis IA):** `backend/models/analisis_ia.go`
+- **Backend Models (Login):** `backend/models/usuario.go`
+- **Handler (Análisis IA):** `backend/handlers/analisis_ia_handler.go`
+- **Handler (Login):** `backend/handlers/auth.go`
 - **Routes:** `backend/routes/routes.go`
+- **Docker Compose:** `docker-compose.yml` (puertos de todos los servicios)
 - **PROJECT_ARCHITECTURE:** Contrato exacto con microservicio MONAI (§9)
 - **RF-12/RN-007:** Regla de negocio sobre pre-diagnóstico
 
