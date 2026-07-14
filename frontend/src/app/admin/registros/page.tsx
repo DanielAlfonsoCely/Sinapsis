@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   ShieldAlert,
   FileText,
@@ -40,99 +40,21 @@ type RegistroAuditoria = {
   fecha_operacion: string;
 };
 
-// ---------------------------------------------------------------------------
-// Mock — coherente con bitacora_auditoria y cambios en historia_clinica
-// ---------------------------------------------------------------------------
-const MOCK_REGISTROS: RegistroAuditoria[] = [
-  {
-    id: "a1b2c3d4-0001-0000-0000-000000000001",
-    usuario: "Dr. Camilo Pineda",
-    usuarioEmail: "c.pineda@hufsc.co",
-    tipo_operacion: "crear",
-    tabla_afectada: "historia_clinica",
-    registro_id: "hc-00124",
-    detalles: "Historia clínica creada al registrar paciente Erling Haaland",
-    ip_origen: "192.168.1.10",
-    fecha_operacion: "2026-07-03T22:41:17Z",
-  },
-  {
-    id: "a1b2c3d4-0002-0000-0000-000000000002",
-    usuario: "Dr. Camilo Pineda",
-    usuarioEmail: "c.pineda@hufsc.co",
-    tipo_operacion: "actualizar",
-    tabla_afectada: "historia_clinica",
-    registro_id: "hc-00124",
-    detalles: "Consulta registrada: diagnóstico J06.9 — Infección respiratoria aguda",
-    ip_origen: "192.168.1.10",
-    fecha_operacion: "2026-07-03T23:05:44Z",
-  },
-  {
-    id: "a1b2c3d4-0003-0000-0000-000000000003",
-    usuario: "Dr. Camilo Pineda",
-    usuarioEmail: "c.pineda@hufsc.co",
-    tipo_operacion: "consultar",
-    tabla_afectada: "historia_clinica",
-    registro_id: "hc-00098",
-    detalles: "Visualización del historial clínico completo",
-    ip_origen: "192.168.1.10",
-    fecha_operacion: "2026-07-03T23:18:02Z",
-  },
-  {
-    id: "a1b2c3d4-0004-0000-0000-000000000004",
-    usuario: "Elena Vance",
-    usuarioEmail: "e.vance@sinapsis.co",
-    tipo_operacion: "cambiar_permisos",
-    tabla_afectada: "usuario",
-    registro_id: "usr-00445",
-    detalles: "Estado de cuenta cambiado a suspendido",
-    ip_origen: "10.0.0.5",
-    fecha_operacion: "2026-07-03T20:30:11Z",
-  },
-  {
-    id: "a1b2c3d4-0005-0000-0000-000000000005",
-    usuario: "Dr. Marcus Thorne",
-    usuarioEmail: "m.thorne@centralips.co",
-    tipo_operacion: "usar_ia",
-    tabla_afectada: "historia_clinica",
-    registro_id: "hc-00231",
-    detalles: "Análisis de imagen médica solicitado al módulo MONAI",
-    ip_origen: "172.18.0.3",
-    fecha_operacion: "2026-07-03T19:47:33Z",
-  },
-  {
-    id: "a1b2c3d4-0006-0000-0000-000000000006",
-    usuario: "Dr. Camilo Pineda",
-    usuarioEmail: "c.pineda@hufsc.co",
-    tipo_operacion: "actualizar",
-    tabla_afectada: "historia_clinica",
-    registro_id: "hc-00124",
-    detalles: "Paciente remitido a Dr. Marcus Thorne — nueva entidad tratante asignada",
-    ip_origen: "192.168.1.10",
-    fecha_operacion: "2026-07-03T18:22:55Z",
-  },
-  {
-    id: "a1b2c3d4-0007-0000-0000-000000000007",
-    usuario: "Elena Vance",
-    usuarioEmail: "e.vance@sinapsis.co",
-    tipo_operacion: "exportar",
-    tabla_afectada: "historia_clinica",
-    registro_id: null,
-    detalles: "Exportación de reporte global de historias clínicas (PDF)",
-    ip_origen: "10.0.0.5",
-    fecha_operacion: "2026-07-03T17:10:00Z",
-  },
-  {
-    id: "a1b2c3d4-0008-0000-0000-000000000008",
-    usuario: "Elena Vance",
-    usuarioEmail: "e.vance@sinapsis.co",
-    tipo_operacion: "crear",
-    tabla_afectada: "entidad",
-    registro_id: "ent-00160",
-    detalles: "Nueva entidad registrada: Hospital Universitario UNAL",
-    ip_origen: "10.0.0.5",
-    fecha_operacion: "2026-07-03T00:52:12Z",
-  },
-];
+// Forma en que llega del backend
+type AuditLogEntry = {
+  id: string;
+  usuario_id: string;
+  usuario_nombre: string;
+  usuario_email: string;
+  tipo_operacion: TipoOperacion;
+  tabla_afectada: string;
+  registro_id: string | null;
+  ip_origen: string | null;
+  detalles: string | null;
+  fecha_operacion: string;
+};
+
+const LIMIT = 50;
 
 // ---------------------------------------------------------------------------
 // Helpers visuales
@@ -160,7 +82,8 @@ const TABLAS_LEGIBLES: Record<string, string> = {
 };
 
 function formatFecha(iso: string) {
-  return new Date(iso).toLocaleString("es-CO", {
+  return new Date(iso + (iso.endsWith("Z") ? "" : "Z")).toLocaleString("es-CO", {
+    timeZone: "America/Bogota",
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -179,16 +102,70 @@ function initials(nombre: string) {
     .toUpperCase();
 }
 
+function getToken() {
+  return document.cookie.split("; ").find((c) => c.startsWith("token="))?.split("=")[1];
+}
+
 // ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
 export default function RegistrosSistemaPage() {
+  const [registros, setRegistros] = useState<RegistroAuditoria[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+
   const [search, setSearch] = useState("");
   const [filtroOp, setFiltroOp] = useState<string>("");
   const [filtroTabla, setFiltroTabla] = useState<string>("");
   const [detalle, setDetalle] = useState<RegistroAuditoria | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const filtered = MOCK_REGISTROS.filter((r) => {
+  const fetchRegistros = useCallback(async (page: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = getToken();
+      const params = new URLSearchParams({
+        limit: String(LIMIT),
+        offset: String((page - 1) * LIMIT),
+      });
+      const res = await fetch(`http://localhost:8080/api/v1/admin/auditoria?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 403) { window.location.href = "/login"; return; }
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json() as { registros: AuditLogEntry[]; total: number };
+
+      // Mapear campos del backend al tipo local
+      const mapped: RegistroAuditoria[] = (data.registros ?? []).map((e) => ({
+        id: e.id,
+        usuario: e.usuario_nombre,
+        usuarioEmail: e.usuario_email,
+        tipo_operacion: e.tipo_operacion,
+        tabla_afectada: e.tabla_afectada,
+        registro_id: e.registro_id ?? null,
+        detalles: e.detalles ?? null,
+        ip_origen: e.ip_origen ?? null,
+        fecha_operacion: e.fecha_operacion,
+      }));
+
+      setRegistros(mapped);
+      setTotal(data.total ?? 0);
+    } catch {
+      setError("No se pudo cargar la bitácora de auditoría.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchRegistros(currentPage);
+  }, [currentPage, fetchRegistros]);
+
+  // Filtrado client-side sobre los registros ya cargados
+  const filtered = registros.filter((r) => {
     const matchSearch =
       !search ||
       r.usuario.toLowerCase().includes(search.toLowerCase()) ||
@@ -199,6 +176,16 @@ export default function RegistrosSistemaPage() {
     const matchTabla = !filtroTabla || r.tabla_afectada === filtroTabla;
     return matchSearch && matchOp && matchTabla;
   });
+
+  // Stats calculadas sobre los registros cargados
+  const statsModHC = registros.filter(
+    (r) => r.tabla_afectada === "historia_clinica" &&
+      (r.tipo_operacion === "crear" || r.tipo_operacion === "actualizar"),
+  ).length;
+  const statsExport = registros.filter((r) => r.tipo_operacion === "exportar").length;
+  const statsPermisos = registros.filter((r) => r.tipo_operacion === "cambiar_permisos").length;
+
+  const totalPages = Math.ceil(total / LIMIT);
 
   const selectClass =
     "rounded border border-line bg-field px-3 py-2 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal";
@@ -226,7 +213,7 @@ export default function RegistrosSistemaPage() {
               <Row label="Usuario" value={`${detalle.usuario} (${detalle.usuarioEmail})`} />
               <Row
                 label="Operación"
-                value={OPERACION_STYLES[detalle.tipo_operacion].label}
+                value={OPERACION_STYLES[detalle.tipo_operacion]?.label ?? detalle.tipo_operacion}
               />
               <Row
                 label="Tabla afectada"
@@ -283,7 +270,10 @@ export default function RegistrosSistemaPage() {
             <Download className="size-4" />
             Exportar
           </button>
-          <button className="flex items-center gap-2 rounded border border-line px-4 py-2.5 text-sm text-slate hover:bg-field">
+          <button
+            onClick={() => void fetchRegistros(currentPage)}
+            className="flex items-center gap-2 rounded border border-line px-4 py-2.5 text-sm text-slate hover:bg-field"
+          >
             <RefreshCw className="size-4" />
             Actualizar
           </button>
@@ -293,23 +283,10 @@ export default function RegistrosSistemaPage() {
       {/* Stats rápidas */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
-          { label: "Total registros", value: MOCK_REGISTROS.length.toString() },
-          {
-            label: "Modificaciones HC",
-            value: MOCK_REGISTROS.filter(
-              (r) =>
-                r.tabla_afectada === "historia_clinica" &&
-                (r.tipo_operacion === "crear" || r.tipo_operacion === "actualizar"),
-            ).length.toString(),
-          },
-          {
-            label: "Exportaciones",
-            value: MOCK_REGISTROS.filter((r) => r.tipo_operacion === "exportar").length.toString(),
-          },
-          {
-            label: "Cambios de permisos",
-            value: MOCK_REGISTROS.filter((r) => r.tipo_operacion === "cambiar_permisos").length.toString(),
-          },
+          { label: "Total registros",     value: total.toString() },
+          { label: "Modificaciones HC",   value: statsModHC.toString() },
+          { label: "Exportaciones",        value: statsExport.toString() },
+          { label: "Cambios de permisos", value: statsPermisos.toString() },
         ].map(({ label, value }) => (
           <Card key={label} className="p-4">
             <p className="text-[10px] uppercase tracking-[0.6px] text-muted">{label}</p>
@@ -368,8 +345,18 @@ export default function RegistrosSistemaPage() {
         </div>
       </Card>
 
+      {/* Banner error */}
+      {error && (
+        <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {error}
+        </div>
+      )}
+
       {/* Tabla */}
       <Card className="overflow-hidden">
+        {loading && (
+          <div className="px-6 py-4 text-center text-sm text-muted">Cargando...</div>
+        )}
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-[#e6f2fa] text-left text-xs uppercase tracking-[0.6px] text-label">
@@ -383,7 +370,7 @@ export default function RegistrosSistemaPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {!loading && filtered.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-6 py-8 text-center text-slate">
                   No se encontraron registros.
@@ -391,7 +378,7 @@ export default function RegistrosSistemaPage() {
               </tr>
             )}
             {filtered.map((r) => {
-              const op = OPERACION_STYLES[r.tipo_operacion];
+              const op = OPERACION_STYLES[r.tipo_operacion] ?? { tone: "neutral" as const, label: r.tipo_operacion };
               return (
                 <tr key={r.id} className="border-t border-line hover:bg-shell">
                   <td className="px-6 py-4 font-mono text-xs text-slate whitespace-nowrap">
@@ -438,16 +425,36 @@ export default function RegistrosSistemaPage() {
 
         <div className="flex items-center justify-between border-t border-line px-6 py-4">
           <p className="text-sm text-muted">
-            Mostrando {filtered.length} de {MOCK_REGISTROS.length} registros
+            {total === 0
+              ? "No hay registros para mostrar"
+              : `Mostrando ${filtered.length} de ${total} registros`}
           </p>
           <div className="flex items-center gap-1">
-            <button className="flex size-8 items-center justify-center rounded border border-line text-slate hover:bg-field">
+            <button
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage((p) => p - 1)}
+              className="flex size-8 items-center justify-center rounded border border-line text-slate hover:bg-field disabled:cursor-not-allowed disabled:opacity-40"
+            >
               <ChevronLeft className="size-4" />
             </button>
-            <button className="flex size-8 items-center justify-center rounded border border-teal bg-teal text-sm text-white">
-              1
-            </button>
-            <button className="flex size-8 items-center justify-center rounded border border-line text-sm text-slate hover:bg-field">
+            {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => i + 1).map((p) => (
+              <button
+                key={p}
+                onClick={() => setCurrentPage(p)}
+                className={`flex size-8 items-center justify-center rounded border text-sm transition-colors ${
+                  p === currentPage
+                    ? "border-teal bg-teal text-white"
+                    : "border-line text-slate hover:bg-field"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+            <button
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage((p) => p + 1)}
+              className="flex size-8 items-center justify-center rounded border border-line text-slate hover:bg-field disabled:cursor-not-allowed disabled:opacity-40"
+            >
               <ChevronRight className="size-4" />
             </button>
           </div>
