@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 
 	"sinapsis-backend/config"
 	"sinapsis-backend/db"
@@ -15,6 +16,8 @@ import (
 )
 
 func main() {
+	loadLocalEnv()
+
 	cfg := config.Load()
 
 	if cfg.JWTSecret == "" {
@@ -53,5 +56,16 @@ func main() {
 	log.Printf("server starting on :%s", cfg.ServerPort)
 	if err := r.Run(":" + cfg.ServerPort); err != nil {
 		log.Fatalf("failed to start server: %v", err)
+	}
+}
+
+func loadLocalEnv() {
+	for _, path := range []string{".env", "../.env", "backend/.env"} {
+		if _, err := os.Stat(path); err == nil {
+			if err := godotenv.Load(path); err != nil {
+				log.Printf("warning: could not load %s: %v", path, err)
+			}
+			return
+		}
 	}
 }
