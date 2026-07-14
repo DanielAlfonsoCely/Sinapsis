@@ -1,0 +1,248 @@
+{
+  "info": {
+    "name": "Sinapsis - Análisis IA (MONAI)",
+    "description": "Colección de pruebas para los endpoints del módulo de análisis con IA integrado con el microservicio MONAI",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Solicitar Análisis IA",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Generar IDs para las pruebas",
+              "if (!pm.environment.get('token')) {",
+              "    console.warn('⚠️  No hay token. Asegúrate de autenticarte primero');",
+              "}",
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Verificar respuesta exitosa",
+              "pm.test('Status code es 202 (Aceptado)', function () {",
+              "    pm.response.to.have.status(202);",
+              "});",
+              "",
+              "pm.test('Response tiene campos requeridos', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('id');",
+              "    pm.expect(jsonData).to.have.property('request_id');",
+              "    pm.expect(jsonData).to.have.property('estado');",
+              "});",
+              "",
+              "// Guardar IDs para usar en próximas requests",
+              "if (pm.response.code === 202) {",
+              "    var jsonData = pm.response.json();",
+              "    pm.environment.set('sugerencia_ia_id', jsonData.id);",
+              "    pm.environment.set('request_id', jsonData.request_id);",
+              "    console.log('✅ Análisis solicitado. ID: ' + jsonData.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"analysis_type\": \"ct_spleen_segmentation\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/examenes/{{examen_id}}/analisis-ia",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "examenes",
+            "{{examen_id}}",
+            "analisis-ia"
+          ]
+        },
+        "description": "Solicita al microservicio MONAI que ejecute un análisis sobre una imagen de examen.\n\n**Tipos de análisis soportados:**\n- `ct_spleen_segmentation` - Segmentación de bazo en CT\n- `ct_lung_nodule_detection` - Detección de nódulos pulmonares en CT\n- `mri_brain_tumor_segmentation` - Segmentación de tumor cerebral en MRI\n- `xr_breast_density_classification` - Clasificación de densidad mamaria en RX\n\n**Precondiciones:**\n- El examen debe existir y pertenecer al médico solicitante\n- El examen debe tener una imagen asociada\n- La consulta ligada debe tener pre-diagnóstico registrado (RF-12/RN-007)\n\n**Response (202):**\n- `id`: ID de la sugerencia IA generada\n- `request_id`: ID de la solicitud a la cola RabbitMQ\n- `estado`: \"enviado\""
+      }
+    },
+    {
+      "name": "2. Consultar Estado/Resultado de Análisis",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code es 200 (OK)', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response tiene estructura correcta', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('id');",
+              "    pm.expect(jsonData).to.have.property('estado_procesamiento');",
+              "    pm.expect(jsonData).to.have.property('modelo_ia_utilizado');",
+              "    pm.expect(jsonData).to.have.property('pre_diagnostico_registrado');",
+              "    pm.expect(jsonData).to.have.property('estado_revision');",
+              "});",
+              "",
+              "pm.test('Si pre-diagnóstico está registrado, incluye resultados clínicos', function () {",
+              "    var jsonData = pm.response.json();",
+              "    if (jsonData.pre_diagnostico_registrado) {",
+              "        console.log('ℹ️  Pre-diagnóstico registrado: resultados clínicos visibles');",
+              "        if (jsonData.estado_procesamiento === 'completado') {",
+              "            pm.expect(jsonData).to.have.property('confianza_prediccion');",
+              "            pm.expect(jsonData).to.have.property('descripcion_hallazgo');",
+              "            pm.expect(jsonData).to.have.property('diagnostico_sugerido');",
+              "        }",
+              "    } else {",
+              "        console.log('ℹ️  Pre-diagnóstico NO registrado: resultados clínicos ocultos');",
+              "    }",
+              "});",
+              "",
+              "pm.test('Muestra estado actual del procesamiento', function () {",
+              "    var jsonData = pm.response.json();",
+              "    console.log('Estado: ' + jsonData.estado_procesamiento);",
+              "    if (jsonData.estado_procesamiento === 'completado') {",
+              "        console.log('✅ Análisis completado');",
+              "        if (jsonData.fecha_analisis) {",
+              "            console.log('Fecha análisis: ' + jsonData.fecha_analisis);",
+              "        }",
+              "    } else if (jsonData.estado_procesamiento === 'procesando') {",
+              "        console.log('⏳ Análisis en proceso...');",
+              "    } else if (jsonData.estado_procesamiento === 'fallido') {",
+              "        console.log('❌ Análisis falló');",
+              "    }",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/sugerencias-ia/{{sugerencia_ia_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "sugerencias-ia",
+            "{{sugerencia_ia_id}}"
+          ]
+        },
+        "description": "Consulta el estado actual del análisis IA y retorna los resultados cuando esté completado.\n\n**Comportamiento según pre-diagnóstico (RF-12/RN-007):**\n- Si hay pre-diagnóstico: Devuelve todos los campos, incluyendo hallazgos clínicos\n- Si NO hay pre-diagnóstico: Oculta campos clínicos (confianza, diagnóstico, hallazgo), pero muestra estado de procesamiento\n\n**Posibles estados de procesamiento:**\n- `enviado`: Solicitud en cola RabbitMQ\n- `procesando`: Microservicio ejecutando análisis\n- `completado`: Análisis finalizado exitosamente\n- `fallido`: Error durante el procesamiento\n\n**Response (200):**\nVer modelo `SugerenciaIAResponse` en backend/models/analisis_ia.go"
+      }
+    },
+    {
+      "name": "3. Revisar Análisis IA",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code es 200 (OK)', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response confirma revisión', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('id');",
+              "    pm.expect(jsonData).to.have.property('estado_revision');",
+              "    pm.expect(['revisada', 'rechazada']).to.include(jsonData.estado_revision);",
+              "});",
+              "",
+              "console.log('✅ Análisis revisado exitosamente');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"estado_revision\": \"revisada\",\n  \"observaciones_medico\": \"Los resultados del análisis IA son consistentes con la evaluación clínica inicial. Se recomienda seguimiento en 3 meses.\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/sugerencias-ia/{{sugerencia_ia_id}}/revision",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "sugerencias-ia",
+            "{{sugerencia_ia_id}}",
+            "revision"
+          ]
+        },
+        "description": "El médico marca el análisis como revisado o rechazado y opcionalmente agrega observaciones.\n\n**Validaciones:**\n- El análisis debe estar en estado `completado`\n- Solo el médico solicitante puede revisar\n\n**Estados válidos:**\n- `revisada`: Análisis aprobado por el médico\n- `rechazada`: Análisis rechazado (puede requerir re-análisis)\n\n**Campos opcionales:**\n- `observaciones_medico`: Comentarios del médico sobre el análisis\n\n**Response (200):**\n- `id`: ID de la sugerencia IA\n- `estado_revision`: Estado actualizado"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "examen_id",
+      "value": "",
+      "type": "string",
+      "description": "ID del examen para solicitar análisis"
+    },
+    {
+      "key": "sugerencia_ia_id",
+      "value": "",
+      "type": "string",
+      "description": "ID de la sugerencia IA (generado por el primer endpoint)"
+    },
+    {
+      "key": "request_id",
+      "value": "",
+      "type": "string",
+      "description": "ID de la solicitud en RabbitMQ"
+    }
+  ]
+}
