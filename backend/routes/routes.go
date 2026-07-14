@@ -73,6 +73,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		{
 			citas.GET("/hoy", middleware.RequireAuth(cfg), h.cita.CitasHoy)
 			citas.GET("/semana", middleware.RequireAuth(cfg), h.cita.CitasSemana)
+			citas.GET("/disponibilidad", middleware.RequireAuth(cfg), h.cita.Disponibilidad)
 			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
 		}
 

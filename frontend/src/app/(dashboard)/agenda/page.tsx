@@ -1,18 +1,21 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Fragment, useEffect, useState, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, Clock, User } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-const HOURS = [
-  "07:00","08:00","09:00","10:00","11:00","12:00",
-  "13:00","14:00","15:00","16:00","17:00","18:00",
-];
+// Franjas de media hora de 06:00 a 19:30 (mismo rango en que puede agendar el paciente).
+const HOURS = Array.from({ length: 28 }, (_, i) => {
+  const total = 6 * 60 + i * 30; // 06:00 .. 19:30
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+});
 
 type CitaAPI = {
   id: string;
-  fecha_hora: string; // UTC sin Z
+  fecha_hora: string; // hora local de Colombia (pared), aunque venga marcada como UTC
   estado: string;
   motivo: string | null;
   paciente: {
@@ -31,15 +34,30 @@ const estadoTone: Record<string, string> = {
   no_asistio: "bg-danger/10 border-danger/30 text-danger",
 };
 
-// Convierte string UTC (sin Z) a Date tratándolo como UTC
-function toDate(iso: string): Date {
-  const s = iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z";
-  return new Date(s);
+// El backend guarda y devuelve la fecha/hora de la cita en hora local de
+// Colombia (Bogotá), aunque el timestamp venga marcado como UTC ("...Z").
+// Por eso NO convertimos de zona: leemos la hora "de pared" tal cual viene
+// en el string. Convertir aquí restaría 5 horas y descuadraría la agenda.
+function wallParts(iso: string): { ymd: string; hour: number; minute: number } {
+  const m = iso.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (m) {
+    return {
+      ymd: `${m[1]}-${m[2]}-${m[3]}`,
+      hour: parseInt(m[4], 10),
+      minute: parseInt(m[5], 10),
+    };
+  }
+  // Fallback por si el formato es inesperado.
+  const d = new Date(iso);
+  return { ymd: toYMD(d), hour: d.getHours(), minute: d.getMinutes() };
 }
 
-// Fecha YYYY-MM-DD en zona Bogotá para un Date
+// Fecha YYYY-MM-DD de un Date usando sus componentes locales.
 function toYMD(d: Date): string {
-  return d.toLocaleDateString("en-CA", { timeZone: "America/Bogota" }); // en-CA = YYYY-MM-DD
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
 }
 
 // Lunes de la semana que contiene la fecha dada (basado en hora local del browser)
@@ -51,22 +69,16 @@ function getLunes(d: Date): Date {
   return day;
 }
 
-// YYYY-MM-DD para enviar al backend (usa hora local)
-function toYMDLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-}
-
-function citaHour(iso: string): number {
-  // Hora en Bogotá como número
-  const s = toDate(iso).toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: "America/Bogota" });
-  return parseInt(s, 10);
+// Etiqueta de franja "HH:MM" a la que pertenece una cita, redondeando hacia
+// abajo a la media hora (18:00 -> "18:00", 18:15 -> "18:00", 18:45 -> "18:30").
+function citaSlot(iso: string): string {
+  const { hour, minute } = wallParts(iso);
+  const m = minute < 30 ? 0 : 30;
+  return `${String(hour).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function citaDay(iso: string): string {
-  return toYMD(toDate(iso)); // YYYY-MM-DD en Bogotá
+  return wallParts(iso).ymd;
 }
 
 function nombreCompleto(c: CitaAPI) {
@@ -74,9 +86,8 @@ function nombreCompleto(c: CitaAPI) {
 }
 
 function formatHora(iso: string) {
-  return toDate(iso).toLocaleTimeString("es-CO", {
-    hour: "2-digit", minute: "2-digit", timeZone: "America/Bogota",
-  });
+  const { hour, minute } = wallParts(iso);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 export default function AgendaPage() {
@@ -97,7 +108,7 @@ export default function AgendaPage() {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const fecha = toYMDLocal(lunes);
+      const fecha = toYMD(lunes);
       const res = await fetch(
         `http://localhost:8080/api/v1/citas/semana?fecha=${fecha}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : undefined }
@@ -119,15 +130,15 @@ export default function AgendaPage() {
     })();
   }, [refDate, fetchCitas]);
 
-  // Días de la semana visible (lunes a viernes, hora local)
-  const weekDays: Date[] = Array.from({ length: 5 }, (_, i) => {
+  // Días de la semana visible (lunes a domingo, hora local)
+  const weekDays: Date[] = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(refDate);
     d.setDate(d.getDate() + i);
     return d;
   });
 
   const domingo = new Date(refDate);
-  domingo.setDate(domingo.getDate() + 4);
+  domingo.setDate(domingo.getDate() + 6);
 
   // Nombre mes/año para cabecera
   const semanaLabel = `${refDate.toLocaleDateString("es-CO", { day: "numeric", month: "long" })} – ${domingo.toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })}`;
@@ -149,8 +160,7 @@ export default function AgendaPage() {
   }
 
   function citaEnHora(day: Date, hourLabel: string): CitaAPI | undefined {
-    const h = parseInt(hourLabel.split(":")[0], 10);
-    return citasDelDia(day).find((c) => citaHour(c.fecha_hora) === h);
+    return citasDelDia(day).find((c) => citaSlot(c.fecha_hora) === hourLabel);
   }
 
   return (
@@ -207,7 +217,7 @@ export default function AgendaPage() {
       {!loading && view === "semana" && (
         <Card className="overflow-hidden">
           {/* Cabecera días */}
-          <div className="grid grid-cols-[64px_repeat(5,1fr)] border-b border-line bg-[#e6f2fa]">
+          <div className="grid grid-cols-[64px_repeat(7,1fr)] border-b border-line bg-[#e6f2fa]">
             <div className="border-r border-line" />
             {weekDays.map((d, i) => {
               const ymd = toYMD(d);
@@ -222,7 +232,7 @@ export default function AgendaPage() {
                   )}
                 >
                   <span className="uppercase tracking-[0.6px] text-label">
-                    {["Lun","Mar","Mié","Jue","Vie"][i]}
+                    {["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"][i]}
                   </span>
                   <span className="mt-0.5 font-display text-lg font-semibold text-ink">
                     {d.getDate()}
@@ -236,13 +246,10 @@ export default function AgendaPage() {
           </div>
 
           {/* Grilla horas */}
-          <div className="grid grid-cols-[64px_repeat(5,1fr)] overflow-auto" style={{ maxHeight: "540px" }}>
+          <div className="grid grid-cols-[64px_repeat(7,1fr)] overflow-auto" style={{ maxHeight: "540px" }}>
             {HOURS.map((h) => (
-              <>
-                <div
-                  key={`h-${h}`}
-                  className="border-b border-r border-line px-2 py-3 text-right text-xs text-muted"
-                >
+              <Fragment key={h}>
+                <div className="border-b border-r border-line px-2 py-3 text-right text-xs text-muted">
                   {h}
                 </div>
                 {weekDays.map((d) => {
@@ -266,7 +273,7 @@ export default function AgendaPage() {
                     </div>
                   );
                 })}
-              </>
+              </Fragment>
             ))}
           </div>
         </Card>
@@ -291,7 +298,7 @@ export default function AgendaPage() {
                   )}
                 >
                   <span className="uppercase tracking-[0.6px]">
-                    {["Lun","Mar","Mié","Jue","Vie"][i]}
+                    {["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"][i]}
                   </span>
                   <span className="font-display text-lg font-semibold">{d.getDate()}</span>
                 </button>

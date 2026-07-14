@@ -20,6 +20,7 @@ type PacienteCita = {
   apellidos_paciente: string;
   numero_documento: string;
   fecha_hora: string; // de la cita de hoy
+  citaId: string; // id de la cita: un mismo paciente puede tener más de una hoy
 };
 
 type Stats = {
@@ -33,18 +34,16 @@ function initials(nombre: string, apellidos: string) {
 }
 
 function formatHora(iso: string) {
-  try {
-    // El backend retorna timestamps sin sufijo de timezone (asumidos UTC).
-    // Añadimos "Z" para forzar interpretación UTC y mostramos en hora Colombia.
-    const utc = iso.endsWith("Z") ? iso : iso + "Z";
-    return new Date(utc).toLocaleTimeString("es-CO", {
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "America/Bogota",
-    });
-  } catch {
-    return "";
-  }
+  // El backend devuelve la hora ya en horario de Colombia (aunque el timestamp
+  // venga marcado como UTC). NO convertimos de zona: leemos la hora "de pared"
+  // tal cual, si no restaríamos 5 horas.
+  const m = iso.match(/\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/);
+  if (!m) return "";
+  const [hh, mm] = [m[1], m[2]].map(Number);
+  return new Date(2000, 0, 1, hh, mm).toLocaleTimeString("es-CO", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function DashboardPage() {
@@ -91,7 +90,7 @@ export default function DashboardPage() {
 
         if (citasRes.ok) {
           const data = await citasRes.json();
-          const citas: { estado: string; paciente: PacienteCita; fecha_hora: string }[] =
+          const citas: { id: string; estado: string; paciente: PacienteCita; fecha_hora: string }[] =
             data.citas ?? [];
           const total = citas.length;
           const completadas = citas.filter((c) => c.estado === "completada").length;
@@ -106,6 +105,7 @@ export default function DashboardPage() {
               citas.slice(0, 5).map((c) => ({
                 ...c.paciente,
                 fecha_hora: c.fecha_hora,
+                citaId: c.id,
               }))
             );
           }
@@ -197,7 +197,7 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {pacientes.map((p) => (
-                  <tr key={p.id} className="border-t border-line">
+                  <tr key={p.citaId} className="border-t border-line">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <span className="flex size-8 items-center justify-center rounded-xl bg-[#91b9cf]/20 text-xs text-teal">

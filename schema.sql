@@ -141,6 +141,11 @@ CREATE TABLE cita (
     fecha_creacion TIMESTAMP DEFAULT NOW()
 );
 
+-- Un mismo médico no puede tener dos citas activas en el mismo horario
+-- (evita doble reserva por condición de carrera entre dos pacientes).
+CREATE UNIQUE INDEX uq_cita_medico_horario_activo ON cita (medico_id, fecha_hora)
+    WHERE estado IN ('programada', 'en_curso');
+
 -- Remisión: autorización de un médico general para que su paciente consulte una
 -- especialidad. NO cambia el médico tratante; el especialista atiende temporalmente.
 CREATE TABLE remision (
