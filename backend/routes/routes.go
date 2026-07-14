@@ -102,7 +102,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 		admin := api.Group("/admin")
 		admin.Use(middleware.RequireAuth(cfg), middleware.RequireRole("admin_plataforma"))
 		{
-			admin.GET("/usuarios", h.usuario.ObtenerUsuarios)
+			admin.GET("/usuarios", h.adminUsuario.ListUsuarios)
 			admin.POST("/usuarios", h.usuario.CrearUsuario)
 			admin.PUT("/usuarios/:id", h.usuario.EditarUsuario)
 			admin.DELETE("/usuarios/:id", h.usuario.EliminarUsuario)

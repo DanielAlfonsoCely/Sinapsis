@@ -18,7 +18,7 @@ const NAV = [
   { href: "/admin/dashboard_admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/entidades", label: "Entidades de Salud", icon: Building2 },
   { href: "/admin/usuarios", label: "Gestión de Usuarios", icon: Users },
-  { href: "/admin/logs", label: "Registros del Sistema", icon: ScrollText },
+  { href: "/admin/registros", label: "Registros del Sistema", icon: ScrollText },
   { href: "/admin/configuracion", label: "Configuración", icon: Settings },
 ];
 

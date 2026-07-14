@@ -47,14 +47,15 @@ func (r *AuditRepository) Insert(ctx context.Context, entry models.AuditLogEntry
 }
 
 // ListRecent devuelve la página solicitada junto con el total real de registros
-// en audit_log (no el tamaño de la página).
+// en bitacora_auditoria (no el tamaño de la página).
 // FIX: antes el handler usaba len(entries) como "total", que solo reflejaba
 // el tamaño de la página actual (acotado por limit).
+// FIX: corregido nombre de tabla audit_log → bitacora_auditoria.
 func (r *AuditRepository) ListRecent(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT al.id, al.usuario_id, u.nombre_usuario, u.email, al.tipo_operacion,
 		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion
-		 FROM audit_log al
+		 FROM bitacora_auditoria al
 		 JOIN usuario u ON u.id = al.usuario_id
 		 ORDER BY al.fecha_operacion DESC
 		 LIMIT $1 OFFSET $2`,
@@ -81,7 +82,7 @@ func (r *AuditRepository) ListRecent(ctx context.Context, limit, offset int) ([]
 	}
 
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM bitacora_auditoria`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
