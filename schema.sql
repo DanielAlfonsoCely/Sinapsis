@@ -141,6 +141,11 @@ CREATE TABLE cita (
     fecha_creacion TIMESTAMP DEFAULT NOW()
 );
 
+-- Un mismo médico no puede tener dos citas activas en el mismo horario
+-- (evita doble reserva por condición de carrera entre dos pacientes).
+CREATE UNIQUE INDEX uq_cita_medico_horario_activo ON cita (medico_id, fecha_hora)
+    WHERE estado IN ('programada', 'en_curso');
+
 -- Remisión: autorización de un médico general para que su paciente consulte una
 -- especialidad. NO cambia el médico tratante; el especialista atiende temporalmente.
 CREATE TABLE remision (
@@ -281,7 +286,6 @@ ALTER TABLE paciente ADD CONSTRAINT fk_paciente_usuario FOREIGN KEY (usuario_id)
 ALTER TABLE medico ADD CONSTRAINT fk_medico_usuario FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE RESTRICT;
 ALTER TABLE medico ADD CONSTRAINT fk_medico_entidad FOREIGN KEY (entidad_id) REFERENCES entidad(id) ON DELETE RESTRICT;
 
-ALTER TABLE ips ADD CONSTRAINT fk_ips_entidad FOREIGN KEY (entidad_id) REFERENCES entidad(id) ON DELETE RESTRICT;
 
 ALTER TABLE administrador_entidad ADD CONSTRAINT fk_adminent_usuario FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE RESTRICT;
 ALTER TABLE administrador_entidad ADD CONSTRAINT fk_adminent_entidad FOREIGN KEY (entidad_id) REFERENCES entidad(id) ON DELETE RESTRICT;

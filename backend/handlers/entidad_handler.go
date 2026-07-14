@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -85,4 +87,179 @@ func (h *EntidadHandler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"entidades": entidades, "total": len(entidades)})
+}
+
+// ListAdmin maneja GET /api/v1/admin/entidades.
+// Solo accesible por admin_plataforma (protegido por RequireAdmin middleware).
+func (h *EntidadHandler) ListAdmin(c *gin.Context) {
+	q := c.DefaultQuery("q", "")
+
+	rows, err := h.pool.Query(
+		context.Background(),
+		`SELECT id, nombre_entidad, tipo_entidad, nit, ciudad, estado, fecha_creacion
+		 FROM entidad
+		 WHERE (
+		     $1 = ''
+		     OR nombre_entidad ILIKE '%' || $1 || '%'
+		     OR nit            ILIKE '%' || $1 || '%'
+		     OR ciudad         ILIKE '%' || $1 || '%'
+		 )
+		 ORDER BY nombre_entidad`,
+		q,
+	)
+	if err != nil {
+		log.Printf("list admin entidades error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch entidades"})
+		return
+	}
+	defer rows.Close()
+
+	entidades := make([]models.AdminEntidadListItem, 0)
+	for rows.Next() {
+		var e models.AdminEntidadListItem
+		if err := rows.Scan(
+			&e.ID, &e.NombreEntidad, &e.TipoEntidad, &e.NIT,
+			&e.Ciudad, &e.Estado, &e.FechaCreacion,
+		); err != nil {
+			log.Printf("scan admin entidad error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read entidades"})
+			return
+		}
+		entidades = append(entidades, e)
+	}
+
+	c.JSON(http.StatusOK, models.AdminEntidadListResponse{
+		Entidades: entidades,
+		Total:     len(entidades),
+	})
+}
+
+// GetByIDAdmin maneja GET /api/v1/admin/entidades/:id.
+// Solo accesible por admin_plataforma (protegido por RequireAdmin middleware).
+func (h *EntidadHandler) GetByIDAdmin(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id inválido"})
+		return
+	}
+
+	// Query 1: datos base de la entidad
+	var detalle models.EntidadDetalle
+	err = h.pool.QueryRow(
+		context.Background(),
+		`SELECT id, nombre_entidad, tipo_entidad, nit, ciudad, direccion, telefono, estado, fecha_creacion
+		 FROM entidad WHERE id = $1`,
+		id,
+	).Scan(
+		&detalle.ID, &detalle.NombreEntidad, &detalle.TipoEntidad, &detalle.NIT,
+		&detalle.Ciudad, &detalle.Direccion, &detalle.Telefono, &detalle.Estado, &detalle.FechaCreacion,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "entidad no encontrada"})
+			return
+		}
+		log.Printf("get entidad by id error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch entidad"})
+		return
+	}
+
+	// Query 2: convenios activos (historias clínicas de la entidad)
+	err = h.pool.QueryRow(
+		context.Background(),
+		`SELECT COUNT(*) FROM historia_clinica WHERE entidad_id = $1`,
+		id,
+	).Scan(&detalle.ConveniosActivos)
+	if err != nil {
+		log.Printf("get convenios activos error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch convenios"})
+		return
+	}
+
+	// Query 3: períodos históricos
+	periodoRows, err := h.pool.Query(
+		context.Background(),
+		`SELECT EXTRACT(YEAR FROM fecha_creacion)::int AS anio,
+		        COUNT(*)::int                          AS cantidad_historias
+		 FROM historia_clinica
+		 WHERE entidad_id = $1
+		 GROUP BY anio
+		 ORDER BY anio DESC`,
+		id,
+	)
+	if err != nil {
+		log.Printf("get periodos historicos error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch periodos"})
+		return
+	}
+	defer periodoRows.Close()
+
+	detalle.PeriodosHistoricos = make([]models.PeriodoHistorico, 0)
+	for periodoRows.Next() {
+		var p models.PeriodoHistorico
+		if err := periodoRows.Scan(&p.Anio, &p.CantidadHistorias); err != nil {
+			log.Printf("scan periodo error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read periodos"})
+			return
+		}
+		detalle.PeriodosHistoricos = append(detalle.PeriodosHistoricos, p)
+	}
+
+	// Query 4: usuarios asociados
+	usuarioRows, err := h.pool.Query(
+		context.Background(),
+		`SELECT u.id, u.nombre_usuario, u.apellidos, u.tipo_usuario
+		 FROM usuario u
+		 WHERE u.id IN (
+		     SELECT usuario_id FROM medico WHERE entidad_id = $1
+		     UNION
+		     SELECT usuario_id FROM administrador_entidad WHERE entidad_id = $1
+		 )
+		 ORDER BY u.apellidos, u.nombre_usuario`,
+		id,
+	)
+	if err != nil {
+		log.Printf("get usuarios asociados error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch usuarios"})
+		return
+	}
+	defer usuarioRows.Close()
+
+	detalle.UsuariosAsociados = make([]models.UsuarioAsociado, 0)
+	for usuarioRows.Next() {
+		var u models.UsuarioAsociado
+		if err := usuarioRows.Scan(&u.ID, &u.NombreUsuario, &u.Apellidos, &u.TipoUsuario); err != nil {
+			log.Printf("scan usuario error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read usuarios"})
+			return
+		}
+		detalle.UsuariosAsociados = append(detalle.UsuariosAsociados, u)
+	}
+
+	c.JSON(http.StatusOK, detalle)
+}
+
+// Stats maneja GET /api/v1/admin/stats.
+// Devuelve métricas globales de la plataforma para el dashboard admin.
+func (h *EntidadHandler) Stats(c *gin.Context) {
+	var totalConsultas, totalPacientesActivos, totalUsuariosActivos int
+
+	err := h.pool.QueryRow(
+		context.Background(),
+		`SELECT
+		    (SELECT COUNT(*) FROM consulta)                          AS total_consultas,
+		    (SELECT COUNT(*) FROM paciente WHERE estado = true)      AS total_pacientes_activos,
+		    (SELECT COUNT(*) FROM usuario  WHERE estado = true)      AS total_usuarios_activos`,
+	).Scan(&totalConsultas, &totalPacientesActivos, &totalUsuariosActivos)
+	if err != nil {
+		log.Printf("stats query error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch stats"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total_consultas":         totalConsultas,
+		"total_pacientes_activos": totalPacientesActivos,
+		"total_usuarios_activos":  totalUsuariosActivos,
+	})
 }

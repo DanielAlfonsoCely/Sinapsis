@@ -7,7 +7,7 @@ interface AdminTopbarProps {
 
 export function AdminTopbar({
   systemStatus = "OPTIMAL",
-  entityContext = "ST. MARINA IPS — ACTIVA",
+  entityContext = "ADMINISTRADOR SINAPSIS",
 }: AdminTopbarProps) {
   const statusColors = {
     OPTIMAL: "bg-success/10 border-success/30 text-success",

@@ -13,6 +13,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./init.sql:/docker-entrypoint-initdb.d/02-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sinapsis"]
       interval: 5s
@@ -22,7 +23,7 @@ services:
   backend:
     build:
       context: ./backend
-      network: host
+      # network: host
     container_name: sinapsis_backend
     ports:
       - "8080:8080"
@@ -45,7 +46,7 @@ services:
   frontend:
     build:
       context: ./frontend
-      network: host
+      # network: host
     container_name: sinapsis_frontend
     ports:
       - "3000:3000"

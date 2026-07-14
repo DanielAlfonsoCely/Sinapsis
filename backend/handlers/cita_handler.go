@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sinapsis-backend/models"
@@ -155,6 +156,14 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		}
 	}
 
+	// La cita debe caer en una franja válida: de 06:00 a 19:30, en intervalos de media hora.
+	if !horarioValido(fechaHora) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "la hora debe estar entre las 06:00 y las 19:30, en intervalos de media hora",
+		})
+		return
+	}
+
 	ctx := context.Background()
 
 	// Solo un paciente agenda sus citas.
@@ -210,6 +219,38 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		}
 	}
 
+	// El paciente solo puede tener UNA cita activa (programada o en curso) con el mismo médico.
+	var yaTieneCita bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM cita
+		   WHERE paciente_id = $1 AND medico_id = $2 AND estado IN ('programada','en_curso'))`,
+		pacienteID, medicoID,
+	).Scan(&yaTieneCita); err != nil {
+		log.Printf("check cita activa error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify citas existentes"})
+		return
+	}
+	if yaTieneCita {
+		c.JSON(http.StatusConflict, gin.H{"error": "ya tienes una cita activa con este médico"})
+		return
+	}
+
+	// Ese horario ya puede haber sido tomado por otro paciente con el mismo médico.
+	var horarioOcupado bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM cita
+		   WHERE medico_id = $1 AND fecha_hora = $2 AND estado IN ('programada','en_curso'))`,
+		medicoID, fechaHora,
+	).Scan(&horarioOcupado); err != nil {
+		log.Printf("check horario ocupado error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify disponibilidad"})
+		return
+	}
+	if horarioOcupado {
+		c.JSON(http.StatusConflict, gin.H{"error": "ese horario ya fue tomado, elige otro"})
+		return
+	}
+
 	var citaID uuid.UUID
 	err = h.pool.QueryRow(ctx,
 		`INSERT INTO cita (paciente_id, medico_id, fecha_hora, motivo, estado)
@@ -218,6 +259,13 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		pacienteID, medicoID, fechaHora, req.Motivo,
 	).Scan(&citaID)
 	if err != nil {
+		// Respaldo ante condición de carrera: dos pacientes agendando el mismo
+		// horario al mismo tiempo chocan contra uq_cita_medico_horario_activo.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			c.JSON(http.StatusConflict, gin.H{"error": "ese horario ya fue tomado, elige otro"})
+			return
+		}
 		log.Printf("create cita error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create cita"})
 		return
@@ -229,6 +277,85 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		"fecha_hora":   fechaHora,
 		"es_tratante":  esTratante,
 		"especialidad": strings.TrimSpace(especialidad),
+	})
+}
+
+// Disponibilidad maneja GET /api/v1/citas/disponibilidad?medico_id=...&fecha=YYYY-MM-DD
+// Devuelve las franjas horarias del día (06:00 a 19:30, cada media hora) para
+// ese médico, marcando cuáles ya están ocupadas por otro paciente.
+func (h *CitaHandler) Disponibilidad(c *gin.Context) {
+	if _, exists := c.Get("user_id"); !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+
+	medicoID, err := uuid.Parse(c.Query("medico_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "medico_id inválido"})
+		return
+	}
+
+	// Usamos offset fijo -05:00 (Colombia) para evitar LoadLocation, igual que en Create.
+	bogota := time.FixedZone("America/Bogota", -5*60*60)
+	fecha, err := time.ParseInLocation("2006-01-02", c.Query("fecha"), bogota)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "fecha debe tener formato YYYY-MM-DD"})
+		return
+	}
+	diaSiguiente := fecha.AddDate(0, 0, 1)
+
+	ctx := context.Background()
+
+	var existeMedico bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM medico WHERE id = $1 AND estado = true)`, medicoID,
+	).Scan(&existeMedico); err != nil {
+		log.Printf("check medico error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
+		return
+	}
+	if !existeMedico {
+		c.JSON(http.StatusNotFound, gin.H{"error": "el médico no existe"})
+		return
+	}
+
+	rows, err := h.pool.Query(ctx,
+		`SELECT fecha_hora FROM cita
+		 WHERE medico_id = $1 AND fecha_hora >= $2 AND fecha_hora < $3
+		   AND estado IN ('programada','en_curso')`,
+		medicoID, fecha, diaSiguiente,
+	)
+	if err != nil {
+		log.Printf("list horarios ocupados error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch disponibilidad"})
+		return
+	}
+	defer rows.Close()
+
+	ocupados := make(map[string]bool)
+	for rows.Next() {
+		var fh time.Time
+		if err := rows.Scan(&fh); err != nil {
+			log.Printf("scan horario ocupado error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read disponibilidad"})
+			return
+		}
+		ocupados[fh.Format("15:04")] = true
+	}
+
+	type Horario struct {
+		Hora       string `json:"hora"`
+		Disponible bool   `json:"disponible"`
+	}
+	horarios := make([]Horario, 0, len(slotsDelDia()))
+	for _, slot := range slotsDelDia() {
+		horarios = append(horarios, Horario{Hora: slot, Disponible: !ocupados[slot]})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"medico_id": medicoID,
+		"fecha":     fecha.Format("2006-01-02"),
+		"horarios":  horarios,
 	})
 }
 

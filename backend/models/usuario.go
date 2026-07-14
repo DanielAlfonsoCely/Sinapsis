@@ -26,6 +26,7 @@ type Usuario struct {
 	Email              string    `json:"email"`
 	Contrasena         string    `json:"-"`
 	TipoUsuario        string    `json:"tipo_usuario"`
+	Estado             bool      `json:"estado"`
 	FechaCreacion      time.Time `json:"fecha_creacion"`
 	FechaActualizacion time.Time `json:"fecha_actualizacion"`
 }
@@ -33,4 +34,38 @@ type Usuario struct {
 type LoginResponse struct {
 	Token   string `json:"token"`
 	Usuario any    `json:"usuario"`
+}
+
+// AdminUsuarioItem representa cada fila de la tabla del dashboard admin.
+type AdminUsuarioItem struct {
+	ID                 uuid.UUID `json:"id"`
+	NombreUsuario      string    `json:"nombre_usuario"`
+	Apellidos          string    `json:"apellidos"`
+	Email              string    `json:"email"`
+	TipoUsuario        string    `json:"tipo_usuario"`
+	Estado             bool      `json:"estado"`
+	EntidadNombre      *string   `json:"entidad_nombre"`
+	FechaActualizacion time.Time `json:"fecha_actualizacion"`
+}
+
+// ListUsuariosResponse es el cuerpo de respuesta de GET /api/v1/admin/usuarios.
+type ListUsuariosResponse struct {
+	Usuarios       []AdminUsuarioItem `json:"usuarios"`
+	Total          int                `json:"total"`
+	TotalActivos   int                `json:"total_activos"`
+	TotalInactivos int                `json:"total_inactivos"`
+	Limit          int                `json:"limit"`
+	Offset         int                `json:"offset"`
+}
+
+// PatchRolRequest es el cuerpo de PATCH /api/v1/admin/usuarios/:id/rol.
+type PatchRolRequest struct {
+	TipoUsuario string `json:"tipo_usuario" binding:"required,oneof=medico paciente admin_entidad admin_plataforma"`
+}
+
+// PatchRolResponse es la respuesta de PATCH /api/v1/admin/usuarios/:id/rol.
+type PatchRolResponse struct {
+	ID                 uuid.UUID `json:"id"`
+	TipoUsuario        string    `json:"tipo_usuario"`
+	FechaActualizacion time.Time `json:"fecha_actualizacion"`
 }

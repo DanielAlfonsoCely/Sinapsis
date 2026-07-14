@@ -10,24 +10,28 @@ import (
 )
 
 type Handler struct {
-	auth     *handlers.AuthHandler
-	paciente *handlers.PacienteHandler
-	consulta *handlers.ConsultaHandler
-	cita     *handlers.CitaHandler
-	entidad  *handlers.EntidadHandler
-	formula  *handlers.FormulaHandler
-	anexo    *handlers.AnexoHandler
+	auth               *handlers.AuthHandler
+	paciente           *handlers.PacienteHandler
+	consulta           *handlers.ConsultaHandler
+	cita               *handlers.CitaHandler
+	entidad            *handlers.EntidadHandler
+	formula            *handlers.FormulaHandler
+	anexo              *handlers.AnexoHandler
+	historiaClinicaPDF *handlers.HistoriaClinicaPDFHandler
+	adminUsuario       *handlers.AdminUsuarioHandler
 }
 
 func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 	h := &Handler{
-		auth:     handlers.NewAuthHandler(pool, cfg),
-		paciente: handlers.NewPacienteHandler(pool),
-		consulta: handlers.NewConsultaHandler(pool),
-		cita:     handlers.NewCitaHandler(pool),
-		entidad:  handlers.NewEntidadHandler(pool),
-		formula:  handlers.NewFormulaHandler(pool),
-		anexo:    handlers.NewAnexoHandler(pool, cfg.UploadsDir),
+		auth:               handlers.NewAuthHandler(pool, cfg),
+		paciente:           handlers.NewPacienteHandler(pool),
+		consulta:           handlers.NewConsultaHandler(pool),
+		cita:               handlers.NewCitaHandler(pool),
+		entidad:            handlers.NewEntidadHandler(pool),
+		formula:            handlers.NewFormulaHandler(pool),
+		anexo:              handlers.NewAnexoHandler(pool, cfg.UploadsDir),
+		historiaClinicaPDF: handlers.NewHistoriaClinicaPDFHandler(pool),
+		adminUsuario:       handlers.NewAdminUsuarioHandler(pool),
 	}
 
 	r.GET("/health", func(c *gin.Context) {
@@ -49,6 +53,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 			pacientes.GET("/:id", middleware.RequireAuth(cfg), h.paciente.GetByID)
 			pacientes.GET("/:id/consultas", h.consulta.ListByPaciente)
 			pacientes.GET("/:id/formulas", h.formula.ListByPaciente)
+			pacientes.GET("/:id/historia-clinica/pdf", middleware.RequireAuth(cfg), h.historiaClinicaPDF.ExportPDF)
 			pacientes.POST("", middleware.RequireAuth(cfg), h.paciente.Create)
 			pacientes.POST("/:id/remisiones", middleware.RequireAuth(cfg), h.paciente.AutorizarEspecialidad)
 		}
@@ -68,7 +73,18 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		{
 			citas.GET("/hoy", middleware.RequireAuth(cfg), h.cita.CitasHoy)
 			citas.GET("/semana", middleware.RequireAuth(cfg), h.cita.CitasSemana)
+			citas.GET("/disponibilidad", middleware.RequireAuth(cfg), h.cita.Disponibilidad)
 			citas.POST("", middleware.RequireAuth(cfg), h.cita.Create)
+		}
+
+		admin := api.Group("/admin")
+		admin.Use(middleware.RequireAuth(cfg), middleware.RequireAdmin(cfg))
+		{
+			admin.GET("/usuarios", h.adminUsuario.ListUsuarios)
+			admin.PATCH("/usuarios/:id/rol", h.adminUsuario.PatchRol)
+			admin.GET("/entidades", h.entidad.ListAdmin)
+			admin.GET("/entidades/:id", h.entidad.GetByIDAdmin)
+			admin.GET("/stats", h.entidad.Stats)
 		}
 
 		entidades := api.Group("/entidades")

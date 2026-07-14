@@ -31,6 +31,7 @@ type Agenda = {
   autorizaciones: Autorizacion[];
   citas: Cita[];
 };
+type Horario = { hora: string; disponible: boolean };
 type PacienteDetalle = {
   nombre_paciente: string;
   apellidos_paciente: string;
@@ -39,7 +40,14 @@ type PacienteDetalle = {
 };
 
 function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString("es-CO", {
+  // El backend devuelve la fecha/hora ya en horario de Colombia (aunque el
+  // timestamp venga marcado como UTC). NO convertimos de zona: leemos la hora
+  // "de pared" tal cual, si no restaríamos 5 horas.
+  const m = iso.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!m) return iso;
+  const [y, mo, d, hh, mm] = [m[1], m[2], m[3], m[4], m[5]].map(Number);
+  // Fecha construida con componentes locales (sin conversión de zona).
+  return new Date(y, mo - 1, d, hh, mm).toLocaleString("es-CO", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -48,10 +56,12 @@ function formatDateTime(iso: string) {
   });
 }
 
-function nowLocalForInput() {
+
+// Fecha de hoy en formato YYYY-MM-DD (para el valor y el mínimo del input date).
+function todayForInput() {
   const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 const estadoTone: Record<string, string> = {
@@ -70,9 +80,12 @@ export default function PacienteHomePage() {
   // Modal agendar
   const [target, setTarget] = useState<Medico | null>(null);
   const [fecha, setFecha] = useState("");
+  const [hora, setHora] = useState("");
   const [motivo, setMotivo] = useState("");
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState("");
+  const [horarios, setHorarios] = useState<Horario[]>([]);
+  const [loadingHorarios, setLoadingHorarios] = useState(false);
 
   const token = () =>
     typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -84,6 +97,35 @@ export default function PacienteHomePage() {
     });
     if (res.ok) setAgenda(await res.json());
   }, []);
+
+  // Carga las franjas horarias del día para el médico seleccionado, indicando
+  // cuáles ya están ocupadas por otro paciente.
+  const loadHorarios = useCallback(async (medicoId: string, fechaStr: string) => {
+    setLoadingHorarios(true);
+    setHorarios([]);
+    try {
+      const t = token();
+      const res = await fetch(
+        `http://localhost:8080/api/v1/citas/disponibilidad?medico_id=${medicoId}&fecha=${fechaStr}`,
+        { headers: t ? { Authorization: `Bearer ${t}` } : undefined },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setHorarios(data.horarios ?? []);
+      }
+    } catch {
+      // el select queda vacío; cambiar la fecha reintenta la carga
+    } finally {
+      setLoadingHorarios(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!target || !fecha) return;
+    (async () => {
+      await loadHorarios(target.id, fecha);
+    })();
+  }, [target, fecha, loadHorarios]);
 
   useEffect(() => {
     const t = token();
@@ -116,7 +158,8 @@ export default function PacienteHomePage() {
 
   function openAgendar(m: Medico) {
     setTarget(m);
-    setFecha(nowLocalForInput());
+    setFecha(todayForInput());
+    setHora("");
     setMotivo("");
     setModalError("");
   }
@@ -124,6 +167,10 @@ export default function PacienteHomePage() {
   async function submitAgendar(e: React.FormEvent) {
     e.preventDefault();
     if (!target) return;
+    if (!fecha || !hora) {
+      setModalError("Selecciona fecha y hora de la cita.");
+      return;
+    }
     setSaving(true);
     setModalError("");
     try {
@@ -136,13 +183,19 @@ export default function PacienteHomePage() {
         },
         body: JSON.stringify({
           medico_id: target.id,
-          fecha_hora: fecha,
+          fecha_hora: `${fecha}T${hora}`,
           motivo: motivo || undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setModalError(data.error ?? "No se pudo agendar la cita");
+        if (res.status === 409) {
+          // El horario pudo haber sido tomado por otro paciente justo ahora:
+          // refrescamos la lista para que ya no aparezca disponible.
+          setHora("");
+          loadHorarios(target.id, fecha);
+        }
         return;
       }
       setTarget(null);
@@ -192,7 +245,7 @@ export default function PacienteHomePage() {
         {agenda?.medico_tratante && (
           <Card className="flex flex-col gap-3 p-6">
             <h2 className="font-display font-semibold text-ink">
-              Mi médico general
+              Mi Médico general
             </h2>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -315,13 +368,41 @@ export default function PacienteHomePage() {
               {target.especialidad}
             </p>
             <form onSubmit={submitAgendar} className="flex flex-col gap-4">
-              <Field label="Fecha y hora">
+              <Field label="Fecha">
                 <Input
-                  type="datetime-local"
+                  type="date"
                   required
+                  min={todayForInput()}
                   value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
+                  onChange={(e) => {
+                    setFecha(e.target.value);
+                    setHora("");
+                  }}
                 />
+              </Field>
+              <Field label="Hora" hint={<span className="text-xs text-muted">6:00 a 19:30</span>}>
+                <select
+                  required
+                  value={hora}
+                  onChange={(e) => setHora(e.target.value)}
+                  disabled={loadingHorarios}
+                  className="h-11 w-full rounded-[var(--radius)] border border-line bg-field px-4 text-base text-navy-800 outline-none transition-colors focus:border-teal focus:bg-white focus:ring-2 focus:ring-teal/20"
+                >
+                  <option value="" disabled>
+                    {loadingHorarios
+                      ? "Cargando horarios…"
+                      : horarios.some((h) => h.disponible)
+                        ? "Selecciona una hora…"
+                        : "No hay horarios disponibles este día"}
+                  </option>
+                  {horarios
+                    .filter((h) => h.disponible)
+                    .map((h) => (
+                      <option key={h.hora} value={h.hora}>
+                        {h.hora}
+                      </option>
+                    ))}
+                </select>
               </Field>
               <Field label="Motivo (opcional)">
                 <Input
