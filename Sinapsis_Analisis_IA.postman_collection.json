@@ -1,20 +1,25 @@
 {
   "info": {
+    "_postman_id": "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f7a8",
     "name": "Sinapsis - Análisis IA (MONAI)",
     "description": "Colección de pruebas para los endpoints del módulo de análisis con IA integrado con el microservicio MONAI",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "0"
   },
   "item": [
     {
       "name": "1. Solicitar Análisis IA",
+      "id": "b1c2d3e4-f5a6-4789-b012-c3d4e5f6a7b8",
       "event": [
         {
           "listen": "prerequest",
           "script": {
+            "type": "text/javascript",
+            "packages": {},
             "exec": [
               "// Generar IDs para las pruebas",
               "if (!pm.environment.get('token')) {",
-              "    console.warn('⚠️  No hay token. Asegúrate de autenticarte primero');",
+              "    console.warn('No hay token. Asegurate de autenticarte primero');",
               "}",
               ""
             ]
@@ -23,6 +28,8 @@
         {
           "listen": "test",
           "script": {
+            "type": "text/javascript",
+            "packages": {},
             "exec": [
               "// Verificar respuesta exitosa",
               "pm.test('Status code es 202 (Aceptado)', function () {",
@@ -36,12 +43,12 @@
               "    pm.expect(jsonData).to.have.property('estado');",
               "});",
               "",
-              "// Guardar IDs para usar en próximas requests",
+              "// Guardar IDs para usar en proximas requests",
               "if (pm.response.code === 202) {",
               "    var jsonData = pm.response.json();",
               "    pm.environment.set('sugerencia_ia_id', jsonData.id);",
               "    pm.environment.set('request_id', jsonData.request_id);",
-              "    console.log('✅ Análisis solicitado. ID: ' + jsonData.id);",
+              "    console.log('Analisis solicitado. ID: ' + jsonData.id);",
               "}"
             ]
           }
@@ -83,10 +90,13 @@
     },
     {
       "name": "2. Consultar Estado/Resultado de Análisis",
+      "id": "c1d2e3f4-a5b6-4789-c012-d3e4f5a6b7c8",
       "event": [
         {
           "listen": "test",
           "script": {
+            "type": "text/javascript",
+            "packages": {},
             "exec": [
               "pm.test('Status code es 200 (OK)', function () {",
               "    pm.response.to.have.status(200);",
@@ -101,17 +111,17 @@
               "    pm.expect(jsonData).to.have.property('estado_revision');",
               "});",
               "",
-              "pm.test('Si pre-diagnóstico está registrado, incluye resultados clínicos', function () {",
+              "pm.test('Si pre-diagnostico esta registrado, incluye resultados clinicos', function () {",
               "    var jsonData = pm.response.json();",
               "    if (jsonData.pre_diagnostico_registrado) {",
-              "        console.log('ℹ️  Pre-diagnóstico registrado: resultados clínicos visibles');",
+              "        console.log('Pre-diagnostico registrado: resultados clinicos visibles');",
               "        if (jsonData.estado_procesamiento === 'completado') {",
               "            pm.expect(jsonData).to.have.property('confianza_prediccion');",
               "            pm.expect(jsonData).to.have.property('descripcion_hallazgo');",
               "            pm.expect(jsonData).to.have.property('diagnostico_sugerido');",
               "        }",
               "    } else {",
-              "        console.log('ℹ️  Pre-diagnóstico NO registrado: resultados clínicos ocultos');",
+              "        console.log('Pre-diagnostico NO registrado: resultados clinicos ocultos');",
               "    }",
               "});",
               "",
@@ -119,14 +129,14 @@
               "    var jsonData = pm.response.json();",
               "    console.log('Estado: ' + jsonData.estado_procesamiento);",
               "    if (jsonData.estado_procesamiento === 'completado') {",
-              "        console.log('✅ Análisis completado');",
+              "        console.log('Analisis completado');",
               "        if (jsonData.fecha_analisis) {",
-              "            console.log('Fecha análisis: ' + jsonData.fecha_analisis);",
+              "            console.log('Fecha analisis: ' + jsonData.fecha_analisis);",
               "        }",
               "    } else if (jsonData.estado_procesamiento === 'procesando') {",
-              "        console.log('⏳ Análisis en proceso...');",
+              "        console.log('Analisis en proceso...');",
               "    } else if (jsonData.estado_procesamiento === 'fallido') {",
-              "        console.log('❌ Análisis falló');",
+              "        console.log('Analisis fallo');",
               "    }",
               "});"
             ]
@@ -159,23 +169,26 @@
     },
     {
       "name": "3. Revisar Análisis IA",
+      "id": "d1e2f3a4-b5c6-4789-d012-e3f4a5b6c7d8",
       "event": [
         {
           "listen": "test",
           "script": {
+            "type": "text/javascript",
+            "packages": {},
             "exec": [
               "pm.test('Status code es 200 (OK)', function () {",
               "    pm.response.to.have.status(200);",
               "});",
               "",
-              "pm.test('Response confirma revisión', function () {",
+              "pm.test('Response confirma revision', function () {",
               "    var jsonData = pm.response.json();",
               "    pm.expect(jsonData).to.have.property('id');",
               "    pm.expect(jsonData).to.have.property('estado_revision');",
               "    pm.expect(['revisada', 'rechazada']).to.include(jsonData.estado_revision);",
               "});",
               "",
-              "console.log('✅ Análisis revisado exitosamente');"
+              "console.log('Analisis revisado exitosamente');"
             ]
           }
         }
