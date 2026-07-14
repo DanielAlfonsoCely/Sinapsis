@@ -12,18 +12,20 @@ export function Topbar() {
   });
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("usuario");
-      if (raw) {
-        const u = JSON.parse(raw);
-        setUsuario({
-          nombre_usuario: u.nombre_usuario ?? "",
-          apellidos: u.apellidos ?? "",
-          especialidad: u.especialidad ?? null,
-          entidad: u.entidad ?? null,
-        });
-      }
-    } catch {}
+    void (async () => {
+      try {
+        const raw = localStorage.getItem("usuario");
+        if (raw) {
+          const u = JSON.parse(raw);
+          setUsuario({
+            nombre_usuario: u.nombre_usuario ?? "",
+            apellidos: u.apellidos ?? "",
+            especialidad: u.especialidad ?? null,
+            entidad: u.entidad ?? null,
+          });
+        }
+      } catch {}
+    })();
   }, []);
 
   const nombreCompleto = usuario.nombre_usuario

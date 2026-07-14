@@ -22,6 +22,15 @@ type Handler struct {
 	formula   *handlers.FormulaHandler
 	anexo     *handlers.AnexoHandler
 	auditoria *handlers.AuditoriaHandler
+	auth               *handlers.AuthHandler
+	paciente           *handlers.PacienteHandler
+	consulta           *handlers.ConsultaHandler
+	cita               *handlers.CitaHandler
+	entidad            *handlers.EntidadHandler
+	formula            *handlers.FormulaHandler
+	anexo              *handlers.AnexoHandler
+	historiaClinicaPDF *handlers.HistoriaClinicaPDFHandler
+	adminUsuario       *handlers.AdminUsuarioHandler
 }
 
 func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
@@ -46,6 +55,15 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 		formula:   handlers.NewFormulaHandler(pool),
 		anexo:     handlers.NewAnexoHandler(pool, cfg.UploadsDir),
 		auditoria: handlers.NewAuditoriaHandler(auditService),
+		auth:               handlers.NewAuthHandler(pool, cfg),
+		paciente:           handlers.NewPacienteHandler(pool),
+		consulta:           handlers.NewConsultaHandler(pool),
+		cita:               handlers.NewCitaHandler(pool),
+		entidad:            handlers.NewEntidadHandler(pool),
+		formula:            handlers.NewFormulaHandler(pool),
+		anexo:              handlers.NewAnexoHandler(pool, cfg.UploadsDir),
+		historiaClinicaPDF: handlers.NewHistoriaClinicaPDFHandler(pool),
+		adminUsuario:       handlers.NewAdminUsuarioHandler(pool),
 	}
 
 	r.GET("/health", func(c *gin.Context) {
@@ -69,6 +87,9 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 			pacientes.GET("/:id/formulas", h.formula.ListByPaciente)
 			pacientes.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.Create)
 			pacientes.POST("/:id/remisiones", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.AutorizarEspecialidad)
+			pacientes.GET("/:id/historia-clinica/pdf", middleware.RequireAuth(cfg), h.historiaClinicaPDF.ExportPDF)
+			pacientes.POST("", middleware.RequireAuth(cfg), h.paciente.Create)
+			pacientes.POST("/:id/remisiones", middleware.RequireAuth(cfg), h.paciente.AutorizarEspecialidad)
 		}
 
 		api.GET("/especialidades", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.ListEspecialidades)
@@ -91,6 +112,16 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config) {
 
 		admin := api.Group("/admin")
 		admin.Use(middleware.RequireAuth(cfg), middleware.RequireRole("admin_plataforma"))
+		admin.Use(middleware.RequireAuth(cfg), middleware.RequireAdmin(cfg))
+		{
+			admin.GET("/usuarios", h.adminUsuario.ListUsuarios)
+			admin.PATCH("/usuarios/:id/rol", h.adminUsuario.PatchRol)
+			admin.GET("/entidades", h.entidad.ListAdmin)
+			admin.GET("/entidades/:id", h.entidad.GetByIDAdmin)
+			admin.GET("/stats", h.entidad.Stats)
+		}
+
+		entidades := api.Group("/entidades")
 		{
 			admin.GET("/usuarios", h.usuario.ObtenerUsuarios)
 			admin.POST("/usuarios", h.usuario.CrearUsuario)          // HU-19

@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import {
   Building2,
   Users,
-  Activity,
   BarChart2,
   Plus,
   Search,
@@ -19,47 +19,24 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 
-const ENTIDADES = [
-  {
-    initials: "CG",
-    name: "Central General IPS",
-    nit: "900.123.456-7",
-    location: "Medellín, CO",
-    admin: "Marc Jacobs",
-    patients: "12,402",
-    apiUsage: 75,
-    status: "Activa" as const,
-    plan: "Enterprise",
-  },
-  {
-    initials: "ND",
-    name: "Norte Diagnostic Lab",
-    nit: "800.987.654-3",
-    location: "Bogotá, CO",
-    admin: "Sarah Connor",
-    patients: "5,120",
-    apiUsage: 42,
-    status: "Activa" as const,
-    plan: "Pro",
-  },
-  {
-    initials: "PP",
-    name: "Pacific Pediatric Clinic",
-    nit: "700.456.789-1",
-    location: "Cali, CO",
-    admin: "Roberto Gomez",
-    patients: "2,880",
-    apiUsage: 31,
-    status: "Offline" as const,
-    plan: "Basic",
-  },
-];
+// ── Tipos para el listado dinámico ─────────────────────────────────────────
 
-const STATUS_TONE = {
-  Activa: "success" as const,
-  Offline: "danger" as const,
-  Suspendida: "warning" as const,
-};
+interface AdminEntidadListItem {
+  id: string;
+  nombre_entidad: string;
+  tipo_entidad: string;
+  nit: string;
+  ciudad: string | null;
+  estado: boolean;
+  fecha_creacion: string;
+}
+
+interface AdminEntidadListResponse {
+  entidades: AdminEntidadListItem[];
+  total: number;
+}
+
+// ── Formulario de registro (no modificar) ──────────────────────────────────
 
 const selectClass =
   "h-11 w-full rounded-[var(--radius)] border border-line bg-field px-4 text-sm text-navy-800 outline-none transition-colors focus:border-teal focus:bg-white focus:ring-2 focus:ring-teal/20";
@@ -86,12 +63,45 @@ function validateForm(form: FormState): string | null {
   return null;
 }
 
+// ── Componente principal ───────────────────────────────────────────────────
+
 export default function EntidadesPage() {
+  // Estado del modal de registro (NO SE TOCA)
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+
+  // Estado para el listado dinámico
+  const [entidades, setEntidades] = useState<AdminEntidadListItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [query, setQuery] = useState("");
+  const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [usuariosActivos, setUsuariosActivos] = useState(0)
+  const [totalConsultas, setTotalConsultas] = useState(0)
+  const [totalPacientes, setTotalPacientes] = useState(0)
+
+  async function fetchStats() {
+    try {
+      const token = document.cookie
+        .split("; ")
+        .find((c) => c.startsWith("token="))
+        ?.split("=")[1]
+      const res = await fetch("http://localhost:8080/api/v1/admin/stats", {
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setUsuariosActivos(data.total_usuarios_activos ?? 0)
+      setTotalConsultas(data.total_consultas ?? 0)
+      setTotalPacientes(data.total_pacientes_activos ?? 0)
+    } catch {
+      // silencioso — las cards quedan en 0
+    }
+  }
 
   function openModal() {
     setForm(EMPTY_FORM);
@@ -137,6 +147,47 @@ export default function EntidadesPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function fetchEntidades(q: string) {
+    setLoadingList(true);
+    setListError(null);
+    try {
+      const token = document.cookie
+        .split("; ")
+        .find((c) => c.startsWith("token="))
+        ?.split("=")[1];
+      const params = new URLSearchParams();
+      if (q) params.set("q", q);
+      const res = await fetch(
+        `http://localhost:8080/api/v1/admin/entidades?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${token ?? ""}` } }
+      );
+      if (res.status === 403) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data: AdminEntidadListResponse = await res.json();
+      setEntidades(data.entidades);
+      setTotal(data.total);
+    } catch {
+      setListError("No se pudo cargar el listado de entidades.");
+      setEntidades([]);
+    } finally {
+      setLoadingList(false);
+    }
+  }
+
+  useEffect(() => {
+    void fetchEntidades("");
+    void fetchStats();
+  }, []);
+
+  function handleSearchChange(value: string) {
+    setQuery(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void fetchEntidades(value), 400);
   }
 
   return (
@@ -293,10 +344,10 @@ export default function EntidadesPage() {
       {/* Stats del sistema */}
       <div className="grid grid-cols-2 gap-6 lg:grid-cols-4">
         {[
-          { label: "TOTAL ENTIDADES", value: "160", sub: "registradas" },
-          { label: "USUARIOS ACTIVOS GLOBALES", value: "42,891", sub: "en línea" },
-          { label: "SALUD DEL SISTEMA", value: "Óptima", sub: "todos los nodos" },
-          { label: "CARGA PROMEDIO API", value: "68%", sub: "uso actual" },
+          { label: "TOTAL ENTIDADES",       value: total.toLocaleString("es-CO"),          sub: "registradas" },
+          { label: "USUARIOS ACTIVOS",      value: usuariosActivos.toLocaleString("es-CO"), sub: "en la plataforma" },
+          { label: "CONSULTAS REGISTRADAS", value: totalConsultas.toLocaleString("es-CO"),  sub: "historial total" },
+          { label: "PACIENTES ACTIVOS",     value: totalPacientes.toLocaleString("es-CO"),  sub: "en el sistema" },
         ].map(({ label, value, sub }) => (
           <Card key={label} className="p-5">
             <p className="text-[10px] uppercase tracking-[0.6px] text-muted">{label}</p>
@@ -313,6 +364,8 @@ export default function EntidadesPage() {
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
             <input
               type="text"
+              value={query}
+              onChange={(e) => handleSearchChange(e.target.value)}
               placeholder="Buscar por NIT, nombre de entidad o ciudad..."
               className="h-10 w-full rounded border border-line bg-field pl-9 pr-4 text-sm text-slate placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-teal"
             />
@@ -333,66 +386,81 @@ export default function EntidadesPage() {
       </Card>
 
       {/* Cards de entidades */}
+      {listError && (
+        <div className="rounded border border-danger bg-danger/10 p-4 text-sm text-danger">
+          {listError}
+        </div>
+      )}
+      {loadingList && !listError && (
+        <div className="py-8 text-center text-sm text-muted">Cargando entidades…</div>
+      )}
+      {!loadingList && !listError && entidades.length === 0 && (
+        <div className="py-8 text-center text-sm text-muted">No se encontraron entidades.</div>
+      )}
       <div className="flex flex-col gap-4">
-        {ENTIDADES.map((ent) => (
-          <Card key={ent.nit} className="p-6">
-            <div className="flex items-start gap-6">
-              <div className="flex size-20 shrink-0 items-center justify-center rounded border border-line bg-field">
-                <span className="font-display text-xl font-bold text-teal">
-                  {ent.initials}
-                </span>
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-display text-lg font-semibold text-ink">
-                        {ent.name}
-                      </h3>
-                      <Badge tone={STATUS_TONE[ent.status]}>{ent.status}</Badge>
-                      <Badge tone="neutral">{ent.plan}</Badge>
-                    </div>
-                    <div className="mt-1 flex items-center gap-1 text-sm text-slate">
-                      <MapPin className="size-3" />
-                      {ent.location}
-                    </div>
-                  </div>
+        {entidades.map((ent) => {
+          const initials = ent.nombre_entidad
+            .split(" ")
+            .slice(0, 2)
+            .map((w) => w[0])
+            .join("")
+            .toUpperCase();
+          return (
+            <Card key={ent.id} className="p-6">
+              <div className="flex items-start gap-6">
+                <div className="flex size-20 shrink-0 items-center justify-center rounded border border-line bg-field">
+                  <span className="font-display text-xl font-bold text-teal">{initials}</span>
                 </div>
-                <div className="mt-4 grid grid-cols-4 gap-4 border-t border-line pt-4">
-                  <div>
-                    <p className="text-[10px] uppercase tracking-[0.6px] text-muted">UBICACIÓN</p>
-                    <p className="mt-0.5 text-sm text-navy-800">{ent.location}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-[0.6px] text-muted">ADMINISTRADOR</p>
-                    <p className="mt-0.5 text-sm text-navy-800">{ent.admin}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-[0.6px] text-muted">PACIENTES ACTIVOS</p>
-                    <p className="mt-0.5 text-sm text-navy-800">{ent.patients}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-[0.6px] text-muted">USO DE API</p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className="text-sm text-navy-800">{ent.apiUsage}%</span>
-                      <div className="h-1.5 flex-1 rounded-full bg-field">
-                        <div
-                          className="h-full rounded-full bg-teal"
-                          style={{ width: `${ent.apiUsage}%` }}
-                        />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-3">
+                        <h3 className="font-display text-lg font-semibold text-ink">
+                          {ent.nombre_entidad}
+                        </h3>
+                        <Badge tone={ent.estado ? "success" : "danger"}>
+                          {ent.estado ? "Activa" : "Inactiva"}
+                        </Badge>
+                        <Badge tone="neutral">{ent.tipo_entidad}</Badge>
+                      </div>
+                      <div className="mt-1 flex items-center gap-1 text-sm text-slate">
+                        <MapPin className="size-3" />
+                        {ent.ciudad ?? "—"}
                       </div>
                     </div>
+                    <Link
+                      href={`/admin/entidades/${ent.id}`}
+                      className="flex items-center gap-2 rounded border border-navy px-4 py-2 text-sm text-navy transition-colors hover:bg-navy hover:text-white"
+                    >
+                      Ver Detalle
+                    </Link>
+                  </div>
+                  <div className="mt-4 grid grid-cols-3 gap-4 border-t border-line pt-4">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.6px] text-muted">NIT</p>
+                      <p className="mt-0.5 text-sm text-navy-800">{ent.nit}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.6px] text-muted">TIPO</p>
+                      <p className="mt-0.5 text-sm text-navy-800">{ent.tipo_entidad}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.6px] text-muted">CIUDAD</p>
+                      <p className="mt-0.5 text-sm text-navy-800">{ent.ciudad ?? "—"}</p>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
       </div>
 
       {/* Paginación */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted">Mostrando 1–3 de 160 entidades</p>
+        <p className="text-sm text-muted">
+          {total > 0 ? `Mostrando ${entidades.length} de ${total} entidades` : "Sin entidades"}
+        </p>
         <div className="flex items-center gap-1">
           <button className="flex size-8 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field">
             <ChevronLeft className="size-4" />

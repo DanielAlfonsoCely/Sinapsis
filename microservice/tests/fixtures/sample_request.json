@@ -1,0 +1,10 @@
+{
+  "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "study_id": "study-opaque-001",
+  "patient_ref": "patient-opaque-ref-001",
+  "analysis_type": "ct_spleen_segmentation",
+  "image_uri": "s3://sinapsis-images/studies/001/scan.nii.gz",
+  "requested_by": "doctor-opaque-ref-001",
+  "correlation_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "issued_at": "2026-01-01T12:00:00Z"
+}

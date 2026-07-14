@@ -34,7 +34,14 @@ function initials(nombre: string, apellidos: string) {
 
 function formatHora(iso: string) {
   try {
-    return new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+    // El backend retorna timestamps sin sufijo de timezone (asumidos UTC).
+    // Añadimos "Z" para forzar interpretación UTC y mostramos en hora Colombia.
+    const utc = iso.endsWith("Z") ? iso : iso + "Z";
+    return new Date(utc).toLocaleTimeString("es-CO", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "America/Bogota",
+    });
   } catch {
     return "";
   }
@@ -54,17 +61,19 @@ export default function DashboardPage() {
   });
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("usuario");
-      if (raw) {
-        const u = JSON.parse(raw);
-        setNombreMedico(u.apellidos ?? "");
-        const esp: string = u.especialidad ?? "";
-        setEsTriage(
-          esp.toLowerCase().includes("triage") || esp.toLowerCase().includes("triagge")
-        );
-      }
-    } catch {}
+    void (async () => {
+      try {
+        const raw = localStorage.getItem("usuario");
+        if (raw) {
+          const u = JSON.parse(raw);
+          setNombreMedico(u.apellidos ?? "");
+          const esp: string = u.especialidad ?? "";
+          setEsTriage(
+            esp.toLowerCase().includes("triage") || esp.toLowerCase().includes("triagge")
+          );
+        }
+      } catch {}
+    })();
   }, []);
 
   useEffect(() => {

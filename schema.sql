@@ -281,7 +281,6 @@ ALTER TABLE paciente ADD CONSTRAINT fk_paciente_usuario FOREIGN KEY (usuario_id)
 ALTER TABLE medico ADD CONSTRAINT fk_medico_usuario FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE RESTRICT;
 ALTER TABLE medico ADD CONSTRAINT fk_medico_entidad FOREIGN KEY (entidad_id) REFERENCES entidad(id) ON DELETE RESTRICT;
 
-ALTER TABLE ips ADD CONSTRAINT fk_ips_entidad FOREIGN KEY (entidad_id) REFERENCES entidad(id) ON DELETE RESTRICT;
 
 ALTER TABLE administrador_entidad ADD CONSTRAINT fk_adminent_usuario FOREIGN KEY (usuario_id) REFERENCES usuario(id) ON DELETE RESTRICT;
 ALTER TABLE administrador_entidad ADD CONSTRAINT fk_adminent_entidad FOREIGN KEY (entidad_id) REFERENCES entidad(id) ON DELETE RESTRICT;
