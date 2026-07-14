@@ -248,6 +248,42 @@ func TestRequireAuthTokenValido(t *testing.T) {
 }
 
 // =============================================================================
+// Autenticación — Iniciar sesión (AuthHandler.Login)
+// =============================================================================
+//
+// Login no depende de sesión previa (es el propio endpoint que la crea), así
+// que el único camino que no toca la BD es el de validación del body. Los
+// casos de éxito (credenciales correctas, emisión de JWT) y de error que sí
+// dependen de datos (email no registrado, contraseña incorrecta) requieren
+// una base real y quedan para tests de integración, igual que el resto de
+// reglas de negocio de este archivo.
+
+func TestAuthLoginValidacion(t *testing.T) {
+	h := NewAuthHandler(nil, &config.Config{JWTSecret: "test-secret"})
+
+	t.Run("json inválido -> 400", func(t *testing.T) {
+		c, rec := postJSON(false, "", `{ roto`, nil)
+		h.Login(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("falta email (required) -> 400", func(t *testing.T) {
+		c, rec := postJSON(false, "", `{"contrasena":"secreta123"}`, nil)
+		h.Login(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("email inválido -> 400", func(t *testing.T) {
+		c, rec := postJSON(false, "", `{"email":"no-es-correo","contrasena":"secreta123"}`, nil)
+		h.Login(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("falta contrasena (required) -> 400", func(t *testing.T) {
+		c, rec := postJSON(false, "", `{"email":"ana@mail.com"}`, nil)
+		h.Login(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+}
+
+// =============================================================================
 // HU-02 — Registrar paciente: validación de entrada (PacienteHandler.Create)
 // =============================================================================
 
@@ -445,6 +481,53 @@ func TestAnexoServeValidacion(t *testing.T) {
 	t.Run("anexo id inválido -> 400", func(t *testing.T) {
 		c, rec := newCtx(http.MethodGet, false, "", nil, gin.Params{{Key: "id", Value: "no-uuid"}})
 		h.Serve(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+}
+
+// =============================================================================
+// Entidades — Registrar entidad (EntidadHandler.Create)
+// =============================================================================
+//
+// Al igual que Login, Create no requiere sesión previa a nivel de handler (el
+// middleware de admin se aplica en las rutas, no aquí), así que el único
+// camino sin BD es la validación de entrada. El caso de éxito (INSERT
+// exitoso) y el de NIT duplicado (23505 -> 409) dependen de datos reales y
+// quedan para tests de integración.
+
+func TestEntidadCreateValidacion(t *testing.T) {
+	h := NewEntidadHandler(nil)
+
+	t.Run("json inválido -> 400", func(t *testing.T) {
+		c, rec := postJSON(false, "", `{ roto`, nil)
+		h.Create(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("falta nombre_entidad (required) -> 400", func(t *testing.T) {
+		c, rec := postJSON(false, "", `{"tipo_entidad":"IPS","nit":"900123456-1"}`, nil)
+		h.Create(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("tipo_entidad fuera del enum -> 400", func(t *testing.T) {
+		c, rec := postJSON(false, "", `{"nombre_entidad":"Clínica Sur","tipo_entidad":"clinica_privada","nit":"900123456-1"}`, nil)
+		h.Create(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("falta nit (required) -> 400", func(t *testing.T) {
+		c, rec := postJSON(false, "", `{"nombre_entidad":"Clínica Sur","tipo_entidad":"IPS"}`, nil)
+		h.Create(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("nombre_entidad excede longitud máxima -> 400", func(t *testing.T) {
+		largo := strings.Repeat("a", 151)
+		c, rec := postJSON(false, "", `{"nombre_entidad":"`+largo+`","tipo_entidad":"IPS","nit":"900123456-1"}`, nil)
+		h.Create(c)
+		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("nit excede longitud máxima -> 400", func(t *testing.T) {
+		largo := strings.Repeat("1", 51)
+		c, rec := postJSON(false, "", `{"nombre_entidad":"Clínica Sur","tipo_entidad":"IPS","nit":"`+largo+`"}`, nil)
+		h.Create(c)
 		wantStatus(t, rec, http.StatusBadRequest)
 	})
 }
