@@ -45,23 +45,22 @@ func RequireAuth(cfg *config.Config) gin.HandlerFunc {
 		c.Set("user_id", userID)
 		c.Set("tipo_usuario", tipoUsuario)
 		c.Next()
-	}	
+	}
 }
 
-// middleware/authorize.go
-func RequireAdmin(cfg *config.Config) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        userType, exists := c.Get("tipo_usuario")
-        if !exists {
-            c.JSON(401, gin.H{"error": "unauthorized"})
-            c.Abort()
-            return
-        }
-        if userType != "admin_plataforma" {
-            c.JSON(403, gin.H{"error": "admin privileges required"})
-            c.Abort()
-            return
-        }
-        c.Next()
-    }
+func RequireRole(role string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userType, exists := c.Get("tipo_usuario")
+		if !exists {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing role in session"})
+			return
+		}
+
+		if userType != role {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient role"})
+			return
+		}
+
+		c.Next()
+	}
 }
