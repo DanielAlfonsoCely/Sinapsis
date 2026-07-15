@@ -84,12 +84,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	var user models.Usuario
 	var id uuid.UUID
+	var estado bool
 	err := h.pool.QueryRow(
 		context.Background(),
-		`SELECT id, nombre_usuario, apellidos, email, contrasena_hash, tipo_usuario, fecha_creacion, fecha_actualizacion
+		`SELECT id, nombre_usuario, apellidos, email, contrasena_hash, tipo_usuario, estado, fecha_creacion, fecha_actualizacion
 		 FROM usuario WHERE email = $1`,
 		req.Email,
-	).Scan(&id, &user.NombreUsuario, &user.Apellidos, &user.Email, &user.Contrasena, &user.TipoUsuario, &user.FechaCreacion, &user.FechaActualizacion)
+	).Scan(&id, &user.NombreUsuario, &user.Apellidos, &user.Email, &user.Contrasena, &user.TipoUsuario, &estado, &user.FechaCreacion, &user.FechaActualizacion)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -97,6 +98,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+
+	if !estado {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cuenta desactivada, contacta al administrador"})
 		return
 	}
 
