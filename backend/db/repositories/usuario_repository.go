@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -15,9 +16,10 @@ import (
 )
 
 var (
-	ErrDuplicateEmail  = errors.New("usuario duplicate email")
-	ErrNoUpdateFields  = errors.New("no update fields provided")
-	ErrUsuarioNotFound = errors.New("usuario not found")
+	ErrDuplicateEmail     = errors.New("usuario duplicate email")
+	ErrDuplicateDocumento = errors.New("numero_documento already registered")
+	ErrNoUpdateFields     = errors.New("no update fields provided")
+	ErrUsuarioNotFound    = errors.New("usuario not found")
 )
 
 type UsuarioFilters struct {
@@ -36,10 +38,21 @@ func NewUsuarioRepository(pool *pgxpool.Pool) *UsuarioRepository {
 	return &UsuarioRepository{pool: pool}
 }
 
-func (r *UsuarioRepository) Create(ctx context.Context, req models.RegisterRequest, hashedPassword string) (models.Usuario, error) {
+// ErrEntidadRequired se devuelve cuando el rol requiere entidad_id y no llegó.
+var ErrEntidadRequired = errors.New("entidad_id is required for this role")
+
+// Create inserta la fila base en `usuario` y, según tipo_usuario, la fila
+// extendida correspondiente (medico, paciente, administrador_entidad o
+// administrador_plataforma), todo en una sola transacción.
+func (r *UsuarioRepository) Create(ctx context.Context, req models.CreateUsuarioAdminRequest, hashedPassword string) (models.Usuario, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return models.Usuario{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	var user models.Usuario
-	err := r.pool.QueryRow(
-		ctx,
+	err = tx.QueryRow(ctx,
 		`INSERT INTO usuario (nombre_usuario, apellidos, email, contrasena_hash, tipo_usuario, estado, fecha_creacion, fecha_actualizacion)
 		 VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())
 		 RETURNING id, nombre_usuario, apellidos, email, tipo_usuario, estado, fecha_creacion, fecha_actualizacion`,
@@ -59,6 +72,81 @@ func (r *UsuarioRepository) Create(ctx context.Context, req models.RegisterReque
 			return models.Usuario{}, ErrDuplicateEmail
 		}
 		return models.Usuario{}, fmt.Errorf("create usuario: %w", err)
+	}
+
+	switch req.TipoUsuario {
+	case "medico":
+		if req.EntidadID == "" {
+			return models.Usuario{}, ErrEntidadRequired
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO medico (usuario_id, numero_documento, especialidad, numero_colegiado, experiencia_anios, entidad_id, estado, fecha_registro)
+			 VALUES ($1, $2, $3, $4, $5, $6, true, NOW())`,
+			user.ID, req.NumeroDocumento, req.Especialidad, req.NumeroColegiado, req.ExperienciaAnios, req.EntidadID,
+		)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return models.Usuario{}, fmt.Errorf("create medico: %w", ErrDuplicateDocumento)
+			}
+			return models.Usuario{}, fmt.Errorf("create medico: %w", err)
+		}
+
+	case "paciente":
+		fechaNacimiento, ferr := time.Parse("2006-01-02", req.FechaNacimiento)
+		if ferr != nil {
+			return models.Usuario{}, fmt.Errorf("fecha_nacimiento inválida: %w", ferr)
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO paciente (usuario_id, numero_documento, tipo_documento, nombre_paciente, apellidos_paciente,
+			                       fecha_nacimiento, sexo, telefono, email, fecha_registro, estado)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), true)`,
+			user.ID, req.NumeroDocumento, req.TipoDocumento, req.NombreUsuario, req.Apellidos,
+			fechaNacimiento, req.Sexo, req.Telefono, req.Email,
+		)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return models.Usuario{}, fmt.Errorf("create paciente: %w", ErrDuplicateDocumento)
+			}
+			return models.Usuario{}, fmt.Errorf("create paciente: %w", err)
+		}
+
+	case "admin_entidad":
+		if req.EntidadID == "" {
+			return models.Usuario{}, ErrEntidadRequired
+		}
+		var rolID uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM rol WHERE nombre_rol = 'Administrador de Entidad'`).Scan(&rolID); err != nil {
+			return models.Usuario{}, fmt.Errorf("lookup rol admin_entidad: %w", err)
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO administrador_entidad (usuario_id, entidad_id, rol_id, activo, fecha_asignacion)
+			 VALUES ($1, $2, $3, true, NOW())`,
+			user.ID, req.EntidadID, rolID,
+		)
+		if err != nil {
+			return models.Usuario{}, fmt.Errorf("create administrador_entidad: %w", err)
+		}
+
+	case "admin_plataforma":
+		var rolID, plataformaID uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM rol WHERE nombre_rol = 'Administrador de Plataforma'`).Scan(&rolID); err != nil {
+			return models.Usuario{}, fmt.Errorf("lookup rol admin_plataforma: %w", err)
+		}
+		if err := tx.QueryRow(ctx, `SELECT id FROM plataforma LIMIT 1`).Scan(&plataformaID); err != nil {
+			return models.Usuario{}, fmt.Errorf("lookup plataforma: %w", err)
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO administrador_plataforma (usuario_id, plataforma_id, rol_id, activo, fecha_asignacion)
+			 VALUES ($1, $2, $3, true, NOW())`,
+			user.ID, plataformaID, rolID,
+		)
+		if err != nil {
+			return models.Usuario{}, fmt.Errorf("create administrador_plataforma: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return models.Usuario{}, fmt.Errorf("commit create usuario: %w", err)
 	}
 
 	return user, nil

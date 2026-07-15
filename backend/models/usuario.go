@@ -31,6 +31,33 @@ type RoleRequest struct {
 	TipoUsuario string `json:"tipo_usuario" binding:"required,oneof=medico paciente admin_entidad admin_plataforma"`
 }
 
+// CreateUsuarioAdminRequest es el cuerpo de POST /api/v1/admin/usuarios.
+// Incluye los campos base de usuario más los campos específicos según
+// tipo_usuario, que se validan a mano en el repositorio porque son
+// condicionales (no todos aplican a todos los roles).
+type CreateUsuarioAdminRequest struct {
+	NombreUsuario string `json:"nombre_usuario" binding:"required"`
+	Apellidos     string `json:"apellidos" binding:"required"`
+	Email         string `json:"email" binding:"required,email"`
+	Contrasena    string `json:"contrasena" binding:"required,min=8"`
+	TipoUsuario   string `json:"tipo_usuario" binding:"required,oneof=medico paciente admin_entidad admin_plataforma"`
+
+	// Médico
+	NumeroDocumento  string `json:"numero_documento"`
+	Especialidad     string `json:"especialidad"`
+	NumeroColegiado  string `json:"numero_colegiado"`
+	ExperienciaAnios *int   `json:"experiencia_anios"`
+	EntidadID        string `json:"entidad_id"`
+
+	// Paciente
+	TipoDocumento   string `json:"tipo_documento"`
+	FechaNacimiento string `json:"fecha_nacimiento"`
+	Sexo            string `json:"sexo"`
+	Telefono        string `json:"telefono"`
+
+	// Admin Entidad usa el mismo EntidadID de arriba.
+}
+
 type Usuario struct {
 	ID                 uuid.UUID `json:"id"`
 	NombreUsuario      string    `json:"nombre_usuario"`

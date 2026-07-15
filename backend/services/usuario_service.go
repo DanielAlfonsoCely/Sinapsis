@@ -42,7 +42,7 @@ func (s *UsuarioService) publishAudit(ctx context.Context, actorID uuid.UUID, op
 	})
 }
 
-func (s *UsuarioService) Create(ctx context.Context, actorID uuid.UUID, req models.RegisterRequest) (models.Usuario, error) {
+func (s *UsuarioService) Create(ctx context.Context, actorID uuid.UUID, req models.CreateUsuarioAdminRequest) (models.Usuario, error) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Contrasena), bcrypt.DefaultCost)
 	if err != nil {
 		return models.Usuario{}, fmt.Errorf("hash password: %w", err)

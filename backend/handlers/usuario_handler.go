@@ -30,7 +30,7 @@ func (h *UsuarioHandler) CrearUsuario(c *gin.Context) {
 		return
 	}
 
-	var req models.RegisterRequest
+	var req models.CreateUsuarioAdminRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -38,8 +38,15 @@ func (h *UsuarioHandler) CrearUsuario(c *gin.Context) {
 
 	user, err := h.service.Create(c.Request.Context(), actorID, req)
 	if err != nil {
-		if errors.Is(err, repositories.ErrDuplicateEmail) {
+		switch {
+		case errors.Is(err, repositories.ErrDuplicateEmail):
 			c.JSON(http.StatusConflict, gin.H{"error": "Ya existe un usuario con ese email"})
+			return
+		case errors.Is(err, repositories.ErrDuplicateDocumento):
+			c.JSON(http.StatusConflict, gin.H{"error": "Ya existe un registro con ese número de documento"})
+			return
+		case errors.Is(err, repositories.ErrEntidadRequired):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "entidad_id es requerido para este rol"})
 			return
 		}
 		log.Printf("Error al crear usuario: %v", err)

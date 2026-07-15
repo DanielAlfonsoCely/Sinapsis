@@ -13,6 +13,7 @@ import {
   Eye,
   ChevronLeft,
   ChevronRight,
+  X,
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -38,7 +39,60 @@ interface ListUsuariosResponse {
   offset: number
 }
 
+interface EntidadItem {
+  id: string
+  nombre_entidad: string
+}
+
 const LIMIT = 20
+
+function getToken() {
+  return document.cookie.split("; ").find(c => c.startsWith("token="))?.split("=")[1]
+}
+
+// ---------------------------------------------------------------------------
+// Formulario de creación de usuario — campos base + condicionales por rol
+// ---------------------------------------------------------------------------
+interface CrearUsuarioForm {
+  nombre_usuario: string
+  apellidos: string
+  email: string
+  contrasena: string
+  tipo_usuario: string
+  numero_documento: string
+  especialidad: string
+  numero_colegiado: string
+  experiencia_anios: string
+  entidad_id: string
+  tipo_documento: string
+  fecha_nacimiento: string
+  sexo: string
+  telefono: string
+}
+
+const CREAR_USUARIO_INICIAL: CrearUsuarioForm = {
+  nombre_usuario: "",
+  apellidos: "",
+  email: "",
+  contrasena: "",
+  tipo_usuario: "paciente",
+  numero_documento: "",
+  especialidad: "",
+  numero_colegiado: "",
+  experiencia_anios: "",
+  entidad_id: "",
+  tipo_documento: "CC",
+  fecha_nacimiento: "",
+  sexo: "",
+  telefono: "",
+}
+
+interface EditarUsuarioForm {
+  nombre_usuario: string
+  apellidos: string
+  email: string
+  estado: boolean
+}
 
 export default function UsuariosPage() {
   const [usuarios, setUsuarios] = useState<AdminUsuarioItem[]>([])
@@ -46,6 +100,7 @@ export default function UsuariosPage() {
   const [totalActivos, setTotalActivos] = useState(0)
   const [totalInactivos, setTotalInactivos] = useState(0)
   const [totalEntidades, setTotalEntidades] = useState<number | null>(null)
+  const [entidades, setEntidades] = useState<EntidadItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -53,8 +108,33 @@ export default function UsuariosPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // --- Estado de modales ---
+  const [showCrear, setShowCrear] = useState(false)
+  const [crearForm, setCrearForm] = useState<CrearUsuarioForm>(CREAR_USUARIO_INICIAL)
+  const [crearError, setCrearError] = useState<string | null>(null)
+  const [crearLoading, setCrearLoading] = useState(false)
+
+  const [showVer, setShowVer] = useState(false)
+  const [usuarioVer, setUsuarioVer] = useState<AdminUsuarioItem | null>(null)
+
+  const [showEditar, setShowEditar] = useState(false)
+  const [usuarioEditar, setUsuarioEditar] = useState<AdminUsuarioItem | null>(null)
+  const [editarForm, setEditarForm] = useState<EditarUsuarioForm>({
+    nombre_usuario: "",
+    apellidos: "",
+    email: "",
+    estado: true,
+  })
+  const [editarError, setEditarError] = useState<string | null>(null)
+  const [editarLoading, setEditarLoading] = useState(false)
+
+  const [showBorrar, setShowBorrar] = useState(false)
+  const [usuarioBorrar, setUsuarioBorrar] = useState<AdminUsuarioItem | null>(null)
+  const [borrarError, setBorrarError] = useState<string | null>(null)
+  const [borrarLoading, setBorrarLoading] = useState(false)
+
   async function fetchUsuarios(q: string, rol: string, page: number) {
-    const token = document.cookie.split("; ").find(c => c.startsWith("token="))?.split("=")[1]
+    const token = getToken()
     const params = new URLSearchParams({
       limit: String(LIMIT),
       offset: String((page - 1) * LIMIT),
@@ -73,7 +153,7 @@ export default function UsuariosPage() {
     setLoading(true)
     setError(null)
     try {
-      const token = document.cookie.split("; ").find(c => c.startsWith("token="))?.split("=")[1]
+      const token = getToken()
       const [data, entidadesRes] = await Promise.all([
         fetchUsuarios(q, rol, page),
         fetch("http://localhost:8080/api/v1/entidades", {
@@ -85,8 +165,9 @@ export default function UsuariosPage() {
       setTotalActivos(data.total_activos)
       setTotalInactivos(data.total_inactivos)
       if (entidadesRes.ok) {
-        const entData = await entidadesRes.json() as { total: number }
+        const entData = await entidadesRes.json() as { total: number; entidades?: EntidadItem[] }
         setTotalEntidades(entData.total)
+        if (entData.entidades) setEntidades(entData.entidades)
       }
     } catch (err) {
       if (err instanceof Error && err.message !== "forbidden") {
@@ -104,21 +185,18 @@ export default function UsuariosPage() {
 
   async function handleRolChange(userId: string, nuevoRol: string, index: number) {
     const rolAnterior = usuarios[index].tipo_usuario
-    // 1. Optimistic update
     setUsuarios(prev => prev.map((u, i) => i === index ? { ...u, tipo_usuario: nuevoRol } : u))
     try {
-      const token = document.cookie.split("; ").find(c => c.startsWith("token="))?.split("=")[1]
+      const token = getToken()
       const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios/${userId}/rol`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ tipo_usuario: nuevoRol }),
       })
       if (!res.ok) throw new Error(`Error ${res.status}`)
-      // 2. Sincronizar fecha_actualizacion desde el servidor
       const data = await res.json() as { fecha_actualizacion: string }
       setUsuarios(prev => prev.map((u, i) => i === index ? { ...u, fecha_actualizacion: data.fecha_actualizacion } : u))
     } catch {
-      // 3. Rollback
       setUsuarios(prev => prev.map((u, i) => i === index ? { ...u, tipo_usuario: rolAnterior } : u))
       setError("No se pudo cambiar el rol. Intenta de nuevo.")
     }
@@ -130,6 +208,152 @@ export default function UsuariosPage() {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => void loadData(value, rolFilter, 1), 400)
   }
+
+  // -------------------------------------------------------------------
+  // Crear Usuario — POST /api/v1/admin/usuarios
+  // -------------------------------------------------------------------
+  function openCrear() {
+    setCrearForm(CREAR_USUARIO_INICIAL)
+    setCrearError(null)
+    setShowCrear(true)
+  }
+
+  async function handleCrearSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setCrearError(null)
+    setCrearLoading(true)
+    try {
+      const token = getToken()
+      const payload: Record<string, unknown> = {
+        nombre_usuario: crearForm.nombre_usuario,
+        apellidos: crearForm.apellidos,
+        email: crearForm.email,
+        contrasena: crearForm.contrasena,
+        tipo_usuario: crearForm.tipo_usuario,
+      }
+      if (crearForm.tipo_usuario === "medico") {
+        payload.numero_documento = crearForm.numero_documento
+        payload.especialidad = crearForm.especialidad
+        payload.numero_colegiado = crearForm.numero_colegiado
+        payload.experiencia_anios = crearForm.experiencia_anios ? Number(crearForm.experiencia_anios) : null
+        payload.entidad_id = crearForm.entidad_id
+      } else if (crearForm.tipo_usuario === "paciente") {
+        payload.numero_documento = crearForm.numero_documento
+        payload.tipo_documento = crearForm.tipo_documento
+        payload.fecha_nacimiento = crearForm.fecha_nacimiento
+        payload.sexo = crearForm.sexo
+        payload.telefono = crearForm.telefono
+      } else if (crearForm.tipo_usuario === "admin_entidad") {
+        payload.entidad_id = crearForm.entidad_id
+      }
+
+      const res = await fetch("http://localhost:8080/api/v1/admin/usuarios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error ?? `Error ${res.status}`)
+      }
+      setShowCrear(false)
+      setCurrentPage(1)
+      void loadData(searchQuery, rolFilter, 1)
+    } catch (err) {
+      setCrearError(err instanceof Error ? err.message : "No se pudo crear el usuario.")
+    } finally {
+      setCrearLoading(false)
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Ver Usuario (solo lectura, sin llamada al backend)
+  // -------------------------------------------------------------------
+  function openVer(u: AdminUsuarioItem) {
+    setUsuarioVer(u)
+    setShowVer(true)
+  }
+
+  // -------------------------------------------------------------------
+  // Editar Usuario — PUT /api/v1/admin/usuarios/:id
+  // -------------------------------------------------------------------
+  function openEditar(u: AdminUsuarioItem) {
+    setUsuarioEditar(u)
+    setEditarForm({
+      nombre_usuario: u.nombre_usuario,
+      apellidos: u.apellidos,
+      email: u.email,
+      estado: u.estado,
+    })
+    setEditarError(null)
+    setShowEditar(true)
+  }
+
+  async function handleEditarSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!usuarioEditar) return
+    setEditarError(null)
+    setEditarLoading(true)
+    try {
+      const token = getToken()
+      const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios/${usuarioEditar.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          nombre_usuario: editarForm.nombre_usuario,
+          apellidos: editarForm.apellidos,
+          email: editarForm.email,
+          estado: editarForm.estado,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error ?? `Error ${res.status}`)
+      }
+      setShowEditar(false)
+      void loadData(searchQuery, rolFilter, currentPage)
+    } catch (err) {
+      setEditarError(err instanceof Error ? err.message : "No se pudo editar el usuario.")
+    } finally {
+      setEditarLoading(false)
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Eliminar Usuario — DELETE /api/v1/admin/usuarios/:id (soft delete)
+  // -------------------------------------------------------------------
+  function openBorrar(u: AdminUsuarioItem) {
+    setUsuarioBorrar(u)
+    setBorrarError(null)
+    setShowBorrar(true)
+  }
+
+  async function handleBorrarConfirm() {
+    if (!usuarioBorrar) return
+    setBorrarError(null)
+    setBorrarLoading(true)
+    try {
+      const token = getToken()
+      const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios/${usuarioBorrar.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error ?? `Error ${res.status}`)
+      }
+      setShowBorrar(false)
+      void loadData(searchQuery, rolFilter, currentPage)
+    } catch (err) {
+      setBorrarError(err instanceof Error ? err.message : "No se pudo eliminar el usuario.")
+    } finally {
+      setBorrarLoading(false)
+    }
+  }
+
+  const inputClass =
+    "w-full rounded border border-line bg-field px-3 py-2 text-sm text-slate placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-teal"
+  const labelClass = "mb-1 block text-xs font-medium uppercase tracking-[0.4px] text-muted"
 
   return (
     <div className="flex flex-col gap-6">
@@ -143,7 +367,10 @@ export default function UsuariosPage() {
             Administra todos los usuarios registrados en la plataforma SINAPSIS
           </p>
         </div>
-        <button className="flex items-center gap-2 rounded bg-navy px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-navy-800">
+        <button
+          onClick={openCrear}
+          className="flex items-center gap-2 rounded bg-navy px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-navy-800"
+        >
           <Users className="size-4" />
           Crear Usuario
         </button>
@@ -268,13 +495,22 @@ export default function UsuariosPage() {
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-center gap-2">
-                    <button className="flex size-8 items-center justify-center rounded text-slate transition-colors hover:bg-field hover:text-ink">
+                    <button
+                      onClick={() => openVer(u)}
+                      className="flex size-8 items-center justify-center rounded text-slate transition-colors hover:bg-field hover:text-ink"
+                    >
                       <Eye className="size-4" />
                     </button>
-                    <button className="flex size-8 items-center justify-center rounded text-slate transition-colors hover:bg-field hover:text-teal">
+                    <button
+                      onClick={() => openEditar(u)}
+                      className="flex size-8 items-center justify-center rounded text-slate transition-colors hover:bg-field hover:text-teal"
+                    >
                       <Pencil className="size-4" />
                     </button>
-                    <button className="flex size-8 items-center justify-center rounded text-slate transition-colors hover:bg-danger/10 hover:text-danger">
+                    <button
+                      onClick={() => openBorrar(u)}
+                      className="flex size-8 items-center justify-center rounded text-slate transition-colors hover:bg-danger/10 hover:text-danger"
+                    >
                       <Trash2 className="size-4" />
                     </button>
                   </div>
@@ -300,7 +536,6 @@ export default function UsuariosPage() {
           const start = total === 0 ? 0 : (currentPage - 1) * LIMIT + 1
           const end = Math.min(currentPage * LIMIT, total)
 
-          // Ventana de hasta 5 páginas centrada en currentPage
           const windowSize = 5
           const halfWindow = Math.floor(windowSize / 2)
           let pageStart = Math.max(1, currentPage - halfWindow)
@@ -387,6 +622,450 @@ export default function UsuariosPage() {
           </div>
         </Card>
       </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Modal: Crear Usuario                                              */}
+      {/* ------------------------------------------------------------------ */}
+      {showCrear && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+          <Card className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden">
+            <div className="flex items-center justify-between border-b border-line px-6 py-4">
+              <h3 className="font-display text-lg font-semibold text-ink">
+                Crear Usuario
+              </h3>
+              <button
+                onClick={() => setShowCrear(false)}
+                className="text-muted hover:text-ink"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCrearSubmit} className="flex flex-col gap-4 overflow-y-auto px-6 py-5">
+              {crearError && (
+                <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+                  {crearError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Nombre</label>
+                  <input
+                    required
+                    type="text"
+                    value={crearForm.nombre_usuario}
+                    onChange={(e) => setCrearForm(f => ({ ...f, nombre_usuario: e.target.value }))}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Apellidos</label>
+                  <input
+                    required
+                    type="text"
+                    value={crearForm.apellidos}
+                    onChange={(e) => setCrearForm(f => ({ ...f, apellidos: e.target.value }))}
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className={labelClass}>Correo electrónico</label>
+                <input
+                  required
+                  type="email"
+                  value={crearForm.email}
+                  onChange={(e) => setCrearForm(f => ({ ...f, email: e.target.value }))}
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <label className={labelClass}>Contraseña</label>
+                <input
+                  required
+                  type="password"
+                  minLength={8}
+                  value={crearForm.contrasena}
+                  onChange={(e) => setCrearForm(f => ({ ...f, contrasena: e.target.value }))}
+                  className={inputClass}
+                  placeholder="Mínimo 8 caracteres"
+                />
+              </div>
+
+              <div>
+                <label className={labelClass}>Rol</label>
+                <select
+                  value={crearForm.tipo_usuario}
+                  onChange={(e) => setCrearForm(f => ({ ...f, tipo_usuario: e.target.value }))}
+                  className={inputClass}
+                >
+                  <option value="paciente">Paciente</option>
+                  <option value="medico">Médico</option>
+                  <option value="admin_entidad">Admin Entidad</option>
+                  <option value="admin_plataforma">Admin Plataforma</option>
+                </select>
+              </div>
+
+              {/* Campos condicionales: Médico */}
+              {crearForm.tipo_usuario === "medico" && (
+                <div className="flex flex-col gap-4 rounded border border-line bg-shell p-4">
+                  <p className="text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    Datos de médico
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelClass}>Número de documento</label>
+                      <input
+                        required
+                        type="text"
+                        value={crearForm.numero_documento}
+                        onChange={(e) => setCrearForm(f => ({ ...f, numero_documento: e.target.value }))}
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Número colegiado</label>
+                      <input
+                        required
+                        type="text"
+                        value={crearForm.numero_colegiado}
+                        onChange={(e) => setCrearForm(f => ({ ...f, numero_colegiado: e.target.value }))}
+                        className={inputClass}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelClass}>Especialidad</label>
+                      <input
+                        required
+                        type="text"
+                        value={crearForm.especialidad}
+                        onChange={(e) => setCrearForm(f => ({ ...f, especialidad: e.target.value }))}
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Años de experiencia</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={crearForm.experiencia_anios}
+                        onChange={(e) => setCrearForm(f => ({ ...f, experiencia_anios: e.target.value }))}
+                        className={inputClass}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelClass}>Entidad</label>
+                    <select
+                      required
+                      value={crearForm.entidad_id}
+                      onChange={(e) => setCrearForm(f => ({ ...f, entidad_id: e.target.value }))}
+                      className={inputClass}
+                    >
+                      <option value="">Selecciona una entidad</option>
+                      {entidades.map(ent => (
+                        <option key={ent.id} value={ent.id}>{ent.nombre_entidad}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Campos condicionales: Paciente */}
+              {crearForm.tipo_usuario === "paciente" && (
+                <div className="flex flex-col gap-4 rounded border border-line bg-shell p-4">
+                  <p className="text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    Datos de paciente
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelClass}>Tipo de documento</label>
+                      <select
+                        value={crearForm.tipo_documento}
+                        onChange={(e) => setCrearForm(f => ({ ...f, tipo_documento: e.target.value }))}
+                        className={inputClass}
+                      >
+                        <option value="CC">Cédula de ciudadanía</option>
+                        <option value="TI">Tarjeta de identidad</option>
+                        <option value="CE">Cédula de extranjería</option>
+                        <option value="RC">Registro civil</option>
+                        <option value="PA">Pasaporte</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelClass}>Número de documento</label>
+                      <input
+                        required
+                        type="text"
+                        value={crearForm.numero_documento}
+                        onChange={(e) => setCrearForm(f => ({ ...f, numero_documento: e.target.value }))}
+                        className={inputClass}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelClass}>Fecha de nacimiento</label>
+                      <input
+                        required
+                        type="date"
+                        value={crearForm.fecha_nacimiento}
+                        onChange={(e) => setCrearForm(f => ({ ...f, fecha_nacimiento: e.target.value }))}
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Sexo</label>
+                      <select
+                        value={crearForm.sexo}
+                        onChange={(e) => setCrearForm(f => ({ ...f, sexo: e.target.value }))}
+                        className={inputClass}
+                      >
+                        <option value="">Seleccionar</option>
+                        <option value="M">Masculino</option>
+                        <option value="F">Femenino</option>
+                        <option value="Otro">Otro</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelClass}>Teléfono</label>
+                    <input
+                      type="text"
+                      value={crearForm.telefono}
+                      onChange={(e) => setCrearForm(f => ({ ...f, telefono: e.target.value }))}
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Campos condicionales: Admin Entidad */}
+              {crearForm.tipo_usuario === "admin_entidad" && (
+                <div className="flex flex-col gap-4 rounded border border-line bg-shell p-4">
+                  <p className="text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    Datos de administrador de entidad
+                  </p>
+                  <div>
+                    <label className={labelClass}>Entidad</label>
+                    <select
+                      required
+                      value={crearForm.entidad_id}
+                      onChange={(e) => setCrearForm(f => ({ ...f, entidad_id: e.target.value }))}
+                      className={inputClass}
+                    >
+                      <option value="">Selecciona una entidad</option>
+                      {entidades.map(ent => (
+                        <option key={ent.id} value={ent.id}>{ent.nombre_entidad}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 border-t border-line pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowCrear(false)}
+                  className="rounded border border-line px-4 py-2 text-sm text-slate hover:bg-field"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={crearLoading}
+                  className="rounded bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-800 disabled:opacity-50"
+                >
+                  {crearLoading ? "Creando..." : "Crear Usuario"}
+                </button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Modal: Ver Usuario                                                */}
+      {/* ------------------------------------------------------------------ */}
+      {showVer && usuarioVer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+          <Card className="flex w-full max-w-md flex-col gap-4 p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg font-semibold text-ink">
+                Detalle del usuario
+              </h3>
+              <button onClick={() => setShowVer(false)} className="text-muted hover:text-ink">
+                <X className="size-5" />
+              </button>
+            </div>
+            <div className="flex flex-col gap-3 rounded border border-line bg-shell p-4 text-sm">
+              <DetailRow label="Nombre completo" value={`${usuarioVer.nombre_usuario} ${usuarioVer.apellidos}`} />
+              <DetailRow label="Correo" value={usuarioVer.email} />
+              <DetailRow label="Rol" value={usuarioVer.tipo_usuario} />
+              <DetailRow label="Entidad" value={usuarioVer.entidad_nombre ?? "—"} />
+              <DetailRow label="Estado" value={usuarioVer.estado ? "Activo" : "Inactivo"} />
+              <DetailRow label="Última actualización" value={new Date(usuarioVer.fecha_actualizacion).toLocaleString("es-CO")} />
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowVer(false)}
+                className="rounded bg-navy px-4 py-2 text-sm text-white hover:bg-navy-800"
+              >
+                Cerrar
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Modal: Editar Usuario (info básica) — PUT al backend              */}
+      {/* ------------------------------------------------------------------ */}
+      {showEditar && usuarioEditar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+          <Card className="flex w-full max-w-md flex-col gap-4 p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg font-semibold text-ink">
+                Editar Usuario
+              </h3>
+              <button onClick={() => setShowEditar(false)} className="text-muted hover:text-ink">
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditarSubmit} className="flex flex-col gap-4">
+              {editarError && (
+                <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+                  {editarError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Nombre</label>
+                  <input
+                    required
+                    type="text"
+                    value={editarForm.nombre_usuario}
+                    onChange={(e) => setEditarForm(f => ({ ...f, nombre_usuario: e.target.value }))}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Apellidos</label>
+                  <input
+                    required
+                    type="text"
+                    value={editarForm.apellidos}
+                    onChange={(e) => setEditarForm(f => ({ ...f, apellidos: e.target.value }))}
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className={labelClass}>Correo electrónico</label>
+                <input
+                  required
+                  type="email"
+                  value={editarForm.email}
+                  onChange={(e) => setEditarForm(f => ({ ...f, email: e.target.value }))}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Estado</label>
+                <select
+                  value={editarForm.estado ? "activo" : "inactivo"}
+                  onChange={(e) => setEditarForm(f => ({ ...f, estado: e.target.value === "activo" }))}
+                  className={inputClass}
+                >
+                  <option value="activo">Activo</option>
+                  <option value="inactivo">Inactivo</option>
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditar(false)}
+                  className="rounded border border-line px-4 py-2 text-sm text-slate hover:bg-field"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={editarLoading}
+                  className="rounded bg-navy px-4 py-2 text-sm font-medium text-white hover:bg-navy-800 disabled:opacity-50"
+                >
+                  {editarLoading ? "Guardando..." : "Guardar Cambios"}
+                </button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Modal: Confirmar Borrado — DELETE al backend (soft delete)        */}
+      {/* ------------------------------------------------------------------ */}
+      {showBorrar && usuarioBorrar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+          <Card className="flex w-full max-w-sm flex-col gap-4 p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
+                <Trash2 className="size-5" />
+              </div>
+              <h3 className="font-display text-lg font-semibold text-ink">
+                Eliminar Usuario
+              </h3>
+            </div>
+            {borrarError && (
+              <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+                {borrarError}
+              </div>
+            )}
+            <p className="text-sm text-slate">
+              ¿Estás seguro que deseas eliminar a{" "}
+              <span className="font-medium text-navy-800">
+                {usuarioBorrar.nombre_usuario} {usuarioBorrar.apellidos}
+              </span>
+              ? El usuario quedará desactivado en la plataforma.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                onClick={() => setShowBorrar(false)}
+                className="rounded border border-line px-4 py-2 text-sm text-slate hover:bg-field"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleBorrarConfirm}
+                disabled={borrarLoading}
+                className="rounded bg-danger px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {borrarLoading ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Helper de fila para el modal "Ver"
+// ---------------------------------------------------------------------------
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-[0.6px] text-muted">{label}</p>
+      <p className="mt-0.5 text-sm text-navy-800">{value}</p>
     </div>
   )
 }
