@@ -40,14 +40,25 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 	usuarioRepo := repositories.NewUsuarioRepository(pool)
 	usuarioService := services.NewUsuarioService(usuarioRepo, auditPublisher)
 
+	// --- Consulta / Cita / Fórmula: ahora con capa de servicio + auditoría,
+	// siguiendo el mismo patrón (Publisher/Observer) que ya usa Usuario ---
+	consultaRepo := repositories.NewConsultaRepository(pool)
+	consultaService := services.NewConsultaService(consultaRepo, auditPublisher)
+
+	citaRepo := repositories.NewCitaRepository(pool)
+	citaService := services.NewCitaService(citaRepo, auditPublisher)
+
+	formulaRepo := repositories.NewFormulaRepository(pool)
+	formulaService := services.NewFormulaService(formulaRepo, auditPublisher)
+
 	h := &Handler{
 		auth:               handlers.NewAuthHandler(pool, cfg),
 		usuario:            handlers.NewUsuarioHandler(usuarioService),
 		paciente:           handlers.NewPacienteHandler(pool),
-		consulta:           handlers.NewConsultaHandler(pool),
-		cita:               handlers.NewCitaHandler(pool),
+		consulta:           handlers.NewConsultaHandler(consultaService),
+		cita:               handlers.NewCitaHandler(citaService),
 		entidad:            handlers.NewEntidadHandler(pool),
-		formula:            handlers.NewFormulaHandler(pool),
+		formula:            handlers.NewFormulaHandler(formulaService),
 		anexo:              handlers.NewAnexoHandler(pool, cfg.UploadsDir),
 		auditoria:          handlers.NewAuditoriaHandler(auditService),
 		historiaClinicaPDF: handlers.NewHistoriaClinicaPDFHandler(pool),
@@ -72,8 +83,13 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 			pacientes.GET("", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.List)
 			pacientes.GET("/me", middleware.RequireAuth(cfg), middleware.RequireRole("paciente"), h.paciente.Me)
 			pacientes.GET("/:id", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.GetByID)
-			pacientes.GET("/:id/consultas", h.consulta.ListByPaciente)
-			pacientes.GET("/:id/formulas", h.formula.ListByPaciente)
+			// FIX: estas dos rutas no tenían RequireAuth. Ahora lo necesitan
+			// además por auditoría: ConsultaService.ListByPaciente y
+			// FormulaService.ListByPaciente registran quién consultó el
+			// historial/fórmulas de este paciente (tipo_operacion='consultar'),
+			// y para eso necesitan el user_id que RequireAuth deja en el contexto.
+			pacientes.GET("/:id/consultas", middleware.RequireAuth(cfg), h.consulta.ListByPaciente)
+			pacientes.GET("/:id/formulas", middleware.RequireAuth(cfg), h.formula.ListByPaciente)
 			pacientes.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.Create)
 			pacientes.POST("/:id/remisiones", middleware.RequireAuth(cfg), middleware.RequireRole("medico"), h.paciente.AutorizarEspecialidad)
 			pacientes.GET("/:id/historia-clinica/pdf", middleware.RequireAuth(cfg), h.historiaClinicaPDF.ExportPDF)

@@ -398,12 +398,21 @@ func TestConsultaCreateValidacion(t *testing.T) {
 // HU-04 — Ver historia clínica: validación (ConsultaHandler.ListByPaciente)
 // =============================================================================
 
+// NOTA: antes esta ruta no exigía sesión (era el bug de ruta sin RequireAuth
+// que se corrigió en routes.go). Ahora ListByPaciente necesita el user_id
+// para auditar quién consultó, así que el test simula una sesión válida y
+// ejercita específicamente la validación del id de paciente.
 func TestConsultaListByPacienteValidacion(t *testing.T) {
 	h := NewConsultaHandler(nil)
 	t.Run("id de paciente inválido -> 400", func(t *testing.T) {
-		c, rec := newCtx(http.MethodGet, false, "", nil, gin.Params{{Key: "id", Value: "no-uuid"}})
+		c, rec := newCtx(http.MethodGet, true, someUUID, nil, gin.Params{{Key: "id", Value: "no-uuid"}})
 		h.ListByPaciente(c)
 		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("sin sesión -> 401", func(t *testing.T) {
+		c, rec := newCtx(http.MethodGet, false, "", nil, gin.Params{{Key: "id", Value: someUUID}})
+		h.ListByPaciente(c)
+		wantStatus(t, rec, http.StatusUnauthorized)
 	})
 }
 
@@ -426,12 +435,19 @@ func TestFormulaCreateAuth(t *testing.T) {
 	})
 }
 
+// NOTA: mismo cambio de contrato que en Consulta -- ListByPaciente ahora
+// exige sesión para poder auditar.
 func TestFormulaListByPacienteValidacion(t *testing.T) {
 	h := NewFormulaHandler(nil)
 	t.Run("id de paciente inválido -> 400", func(t *testing.T) {
-		c, rec := newCtx(http.MethodGet, false, "", nil, gin.Params{{Key: "id", Value: "xx"}})
+		c, rec := newCtx(http.MethodGet, true, someUUID, nil, gin.Params{{Key: "id", Value: "xx"}})
 		h.ListByPaciente(c)
 		wantStatus(t, rec, http.StatusBadRequest)
+	})
+	t.Run("sin sesión -> 401", func(t *testing.T) {
+		c, rec := newCtx(http.MethodGet, false, "", nil, gin.Params{{Key: "id", Value: someUUID}})
+		h.ListByPaciente(c)
+		wantStatus(t, rec, http.StatusUnauthorized)
 	})
 }
 

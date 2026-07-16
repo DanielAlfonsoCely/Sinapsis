@@ -1,32 +1,32 @@
 package handlers
 
 import (
-	"context"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
+	"sinapsis-backend/db/repositories"
 	"sinapsis-backend/models"
+	"sinapsis-backend/services"
 )
 
 type CitaHandler struct {
-	pool *pgxpool.Pool
+	service *services.CitaService
 }
 
-func NewCitaHandler(pool *pgxpool.Pool) *CitaHandler {
-	return &CitaHandler{pool: pool}
+func NewCitaHandler(service *services.CitaService) *CitaHandler {
+	return &CitaHandler{service: service}
 }
 
 // CitasHoy maneja GET /api/v1/citas/hoy.
 // Retorna las citas del médico autenticado para el día de hoy con datos del paciente.
+//
+// Nota de alcance: esta lectura NO se audita -- es la agenda propia del médico,
+// no la consulta del expediente de un paciente específico.
 func (h *CitaHandler) CitasHoy(c *gin.Context) {
 	userIDRaw, exists := c.Get("user_id")
 	if !exists {
@@ -39,62 +39,22 @@ func (h *CitaHandler) CitasHoy(c *gin.Context) {
 		return
 	}
 
-	var medicoID uuid.UUID
-	err = h.pool.QueryRow(context.Background(),
-		`SELECT id FROM medico WHERE usuario_id = $1`, userID,
-	).Scan(&medicoID)
+	ctx := c.Request.Context()
+
+	medicoID, err := h.service.ResolveMedicoID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, repositories.ErrSoloMedico) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede ver sus citas"})
 			return
 		}
-		log.Printf("lookup medico error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
 		return
 	}
 
-	rows, err := h.pool.Query(context.Background(),
-		`SELECT ci.id, ci.fecha_hora, ci.estado,
-		        p.id, p.nombre_paciente, p.apellidos_paciente, p.numero_documento
-		 FROM cita ci
-		 JOIN paciente p ON p.id = ci.paciente_id
-		 WHERE ci.medico_id = $1
-		   AND ci.fecha_hora::date = CURRENT_DATE
-		 ORDER BY ci.fecha_hora`,
-		medicoID,
-	)
+	citas, err := h.service.CitasHoy(ctx, medicoID)
 	if err != nil {
-		log.Printf("list citas hoy error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch citas"})
 		return
-	}
-	defer rows.Close()
-
-	type PacienteResumen struct {
-		ID                string `json:"id"`
-		NombrePaciente    string `json:"nombre_paciente"`
-		ApellidosPaciente string `json:"apellidos_paciente"`
-		NumeroDocumento   string `json:"numero_documento"`
-	}
-	type CitaItem struct {
-		ID        string          `json:"id"`
-		FechaHora time.Time       `json:"fecha_hora"`
-		Estado    string          `json:"estado"`
-		Paciente  PacienteResumen `json:"paciente"`
-	}
-
-	citas := make([]CitaItem, 0)
-	for rows.Next() {
-		var ci CitaItem
-		if err := rows.Scan(
-			&ci.ID, &ci.FechaHora, &ci.Estado,
-			&ci.Paciente.ID, &ci.Paciente.NombrePaciente, &ci.Paciente.ApellidosPaciente, &ci.Paciente.NumeroDocumento,
-		); err != nil {
-			log.Printf("scan cita error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read citas"})
-			return
-		}
-		citas = append(citas, ci)
 	}
 
 	total := len(citas)
@@ -164,119 +124,33 @@ func (h *CitaHandler) Create(c *gin.Context) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
-	// Solo un paciente agenda sus citas.
-	var pacienteID uuid.UUID
-	var tratanteID *uuid.UUID
-	err = h.pool.QueryRow(ctx,
-		`SELECT p.id, hc.medico_tratante_id
-		 FROM paciente p JOIN historia_clinica hc ON hc.paciente_id = p.id
-		 WHERE p.usuario_id = $1`, userID,
-	).Scan(&pacienteID, &tratanteID)
+	res, err := h.service.Create(ctx, userID, userID, medicoID, fechaHora, req.Motivo)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		switch {
+		case errors.Is(err, repositories.ErrSoloPaciente):
 			c.JSON(http.StatusForbidden, gin.H{"error": "solo un paciente puede agendar sus citas"})
-			return
-		}
-		log.Printf("lookup paciente error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify paciente"})
-		return
-	}
-
-	// El médico destino: puede ser el tratante o un especialista.
-	var especialidad string
-	if err := h.pool.QueryRow(ctx,
-		`SELECT especialidad FROM medico WHERE id = $1 AND estado = true`, medicoID,
-	).Scan(&especialidad); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		case errors.Is(err, repositories.ErrMedicoNoExiste):
 			c.JSON(http.StatusNotFound, gin.H{"error": "el médico no existe"})
-			return
-		}
-		log.Printf("lookup medico error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
-		return
-	}
-
-	esTratante := tratanteID != nil && *tratanteID == medicoID
-	if !esTratante {
-		// Debe existir una remisión autorizada para esa especialidad.
-		var autorizado bool
-		if err := h.pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM remision
-			   WHERE paciente_id = $1 AND estado = 'autorizada' AND especialidad = $2)`,
-			pacienteID, especialidad,
-		).Scan(&autorizado); err != nil {
-			log.Printf("check remision error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify autorización"})
-			return
-		}
-		if !autorizado {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error": "no tienes autorización para agendar con esta especialidad",
-			})
-			return
-		}
-	}
-
-	// El paciente solo puede tener UNA cita activa (programada o en curso) con el mismo médico.
-	var yaTieneCita bool
-	if err := h.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM cita
-		   WHERE paciente_id = $1 AND medico_id = $2 AND estado IN ('programada','en_curso'))`,
-		pacienteID, medicoID,
-	).Scan(&yaTieneCita); err != nil {
-		log.Printf("check cita activa error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify citas existentes"})
-		return
-	}
-	if yaTieneCita {
-		c.JSON(http.StatusConflict, gin.H{"error": "ya tienes una cita activa con este médico"})
-		return
-	}
-
-	// Ese horario ya puede haber sido tomado por otro paciente con el mismo médico.
-	var horarioOcupado bool
-	if err := h.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM cita
-		   WHERE medico_id = $1 AND fecha_hora = $2 AND estado IN ('programada','en_curso'))`,
-		medicoID, fechaHora,
-	).Scan(&horarioOcupado); err != nil {
-		log.Printf("check horario ocupado error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify disponibilidad"})
-		return
-	}
-	if horarioOcupado {
-		c.JSON(http.StatusConflict, gin.H{"error": "ese horario ya fue tomado, elige otro"})
-		return
-	}
-
-	var citaID uuid.UUID
-	err = h.pool.QueryRow(ctx,
-		`INSERT INTO cita (paciente_id, medico_id, fecha_hora, motivo, estado)
-		 VALUES ($1, $2, $3, $4, 'programada')
-		 RETURNING id`,
-		pacienteID, medicoID, fechaHora, req.Motivo,
-	).Scan(&citaID)
-	if err != nil {
-		// Respaldo ante condición de carrera: dos pacientes agendando el mismo
-		// horario al mismo tiempo chocan contra uq_cita_medico_horario_activo.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		case errors.Is(err, repositories.ErrSinAutorizacion):
+			c.JSON(http.StatusForbidden, gin.H{"error": "no tienes autorización para agendar con esta especialidad"})
+		case errors.Is(err, repositories.ErrCitaActivaExistente):
+			c.JSON(http.StatusConflict, gin.H{"error": "ya tienes una cita activa con este médico"})
+		case errors.Is(err, repositories.ErrHorarioOcupado):
 			c.JSON(http.StatusConflict, gin.H{"error": "ese horario ya fue tomado, elige otro"})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create cita"})
 		}
-		log.Printf("create cita error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create cita"})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":           citaID,
-		"paciente_id":  pacienteID,
+		"id":           res.CitaID,
+		"paciente_id":  res.PacienteID,
 		"fecha_hora":   fechaHora,
-		"es_tratante":  esTratante,
-		"especialidad": strings.TrimSpace(especialidad),
+		"es_tratante":  res.EsTratante,
+		"especialidad": strings.TrimSpace(res.Especialidad),
 	})
 }
 
@@ -304,13 +178,10 @@ func (h *CitaHandler) Disponibilidad(c *gin.Context) {
 	}
 	diaSiguiente := fecha.AddDate(0, 0, 1)
 
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
-	var existeMedico bool
-	if err := h.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM medico WHERE id = $1 AND estado = true)`, medicoID,
-	).Scan(&existeMedico); err != nil {
-		log.Printf("check medico error: %v", err)
+	existeMedico, err := h.service.ExisteMedicoActivo(ctx, medicoID)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
 		return
 	}
@@ -319,28 +190,10 @@ func (h *CitaHandler) Disponibilidad(c *gin.Context) {
 		return
 	}
 
-	rows, err := h.pool.Query(ctx,
-		`SELECT fecha_hora FROM cita
-		 WHERE medico_id = $1 AND fecha_hora >= $2 AND fecha_hora < $3
-		   AND estado IN ('programada','en_curso')`,
-		medicoID, fecha, diaSiguiente,
-	)
+	ocupados, err := h.service.HorariosOcupados(ctx, medicoID, fecha, diaSiguiente)
 	if err != nil {
-		log.Printf("list horarios ocupados error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch disponibilidad"})
 		return
-	}
-	defer rows.Close()
-
-	ocupados := make(map[string]bool)
-	for rows.Next() {
-		var fh time.Time
-		if err := rows.Scan(&fh); err != nil {
-			log.Printf("scan horario ocupado error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read disponibilidad"})
-			return
-		}
-		ocupados[fh.Format("15:04")] = true
 	}
 
 	type Horario struct {
@@ -374,12 +227,11 @@ func (h *CitaHandler) CitasSemana(c *gin.Context) {
 		return
 	}
 
-	var medicoID uuid.UUID
-	err = h.pool.QueryRow(context.Background(),
-		`SELECT id FROM medico WHERE usuario_id = $1`, userID,
-	).Scan(&medicoID)
+	ctx := c.Request.Context()
+
+	medicoID, err := h.service.ResolveMedicoID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, repositories.ErrSoloMedico) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede ver su agenda"})
 			return
 		}
@@ -410,50 +262,10 @@ func (h *CitaHandler) CitasSemana(c *gin.Context) {
 	lunes = time.Date(lunes.Year(), lunes.Month(), lunes.Day(), 0, 0, 0, 0, bogota)
 	domingo := lunes.AddDate(0, 0, 7)
 
-	rows, err := h.pool.Query(context.Background(),
-		`SELECT ci.id, ci.fecha_hora, ci.estado, ci.motivo,
-		        p.id, p.nombre_paciente, p.apellidos_paciente, p.numero_documento
-		 FROM cita ci
-		 JOIN paciente p ON p.id = ci.paciente_id
-		 WHERE ci.medico_id = $1
-		   AND ci.fecha_hora >= $2
-		   AND ci.fecha_hora < $3
-		 ORDER BY ci.fecha_hora`,
-		medicoID, lunes, domingo,
-	)
+	citas, err := h.service.CitasSemana(ctx, medicoID, lunes, domingo)
 	if err != nil {
-		log.Printf("list citas semana error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch citas"})
 		return
-	}
-	defer rows.Close()
-
-	type PacienteResumen struct {
-		ID                string `json:"id"`
-		NombrePaciente    string `json:"nombre_paciente"`
-		ApellidosPaciente string `json:"apellidos_paciente"`
-		NumeroDocumento   string `json:"numero_documento"`
-	}
-	type CitaItem struct {
-		ID        string          `json:"id"`
-		FechaHora time.Time       `json:"fecha_hora"`
-		Estado    string          `json:"estado"`
-		Motivo    *string         `json:"motivo"`
-		Paciente  PacienteResumen `json:"paciente"`
-	}
-
-	citas := make([]CitaItem, 0)
-	for rows.Next() {
-		var ci CitaItem
-		if err := rows.Scan(
-			&ci.ID, &ci.FechaHora, &ci.Estado, &ci.Motivo,
-			&ci.Paciente.ID, &ci.Paciente.NombrePaciente, &ci.Paciente.ApellidosPaciente, &ci.Paciente.NumeroDocumento,
-		); err != nil {
-			log.Printf("scan cita semana error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read citas"})
-			return
-		}
-		citas = append(citas, ci)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
