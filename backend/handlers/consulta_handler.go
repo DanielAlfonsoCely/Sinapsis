@@ -1,27 +1,24 @@
 package handlers
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
+	"sinapsis-backend/db/repositories"
 	"sinapsis-backend/models"
+	"sinapsis-backend/services"
 )
 
 type ConsultaHandler struct {
-	pool *pgxpool.Pool
+	service *services.ConsultaService
 }
 
-func NewConsultaHandler(pool *pgxpool.Pool) *ConsultaHandler {
-	return &ConsultaHandler{pool: pool}
+func NewConsultaHandler(service *services.ConsultaService) *ConsultaHandler {
+	return &ConsultaHandler{service: service}
 }
 
 // Create maneja POST /api/v1/consultas (HU-03).
@@ -62,152 +59,37 @@ func (h *ConsultaHandler) Create(c *gin.Context) {
 		proximaCita = &parsed
 	}
 
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
-	// Solo un médico puede registrar consultas; su id se resuelve desde el JWT.
-	var medicoID uuid.UUID
-	err = h.pool.QueryRow(ctx,
-		`SELECT id FROM medico WHERE usuario_id = $1`, userID,
-	).Scan(&medicoID)
+	medicoID, err := h.service.ResolveMedicoID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, repositories.ErrSoloMedico) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede registrar consultas"})
 			return
 		}
-		log.Printf("lookup medico error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
 		return
 	}
 
-	// Gate: solo se puede consultar a un paciente con cita activa (programada) para
-	// hoy con este médico. Se valida en el backend para que no se pueda saltar por
-	// URL ni desde la HC (RN: no hay consulta sin cita).
-	var tieneCitaHoy bool
-	if err := h.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM cita
-		   WHERE paciente_id = $1 AND medico_id = $2
-		     AND estado = 'programada' AND fecha_hora::date = CURRENT_DATE)`,
-		pacienteID, medicoID,
-	).Scan(&tieneCitaHoy); err != nil {
-		log.Printf("check cita hoy error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify cita"})
-		return
-	}
-	if !tieneCitaHoy {
-		c.JSON(http.StatusForbidden, gin.H{"error": "el paciente no tiene una cita activa para hoy"})
-		return
-	}
-
-	// La historia clínica del paciente ya debe existir (HU-02).
-	var historiaClinicaID uuid.UUID
-	err = h.pool.QueryRow(ctx,
-		`SELECT id FROM historia_clinica WHERE paciente_id = $1`, pacienteID,
-	).Scan(&historiaClinicaID)
+	res, err := h.service.Create(ctx, userID, medicoID, req, pacienteID, proximaCita)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		switch {
+		case errors.Is(err, repositories.ErrSinCitaHoy):
+			c.JSON(http.StatusForbidden, gin.H{"error": "el paciente no tiene una cita activa para hoy"})
+		case errors.Is(err, repositories.ErrHistoriaNoExiste):
 			c.JSON(http.StatusNotFound, gin.H{"error": "el paciente no tiene historia clínica"})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create consulta"})
 		}
-		log.Printf("lookup historia clinica error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to find historia clínica"})
-		return
-	}
-
-	tx, err := h.pool.Begin(ctx)
-	if err != nil {
-		log.Printf("begin tx error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	var consultaID uuid.UUID
-	var fechaConsulta time.Time
-	err = tx.QueryRow(ctx,
-		`INSERT INTO consulta (
-			historia_clinica_id, paciente_id, medico_id,
-			tipo_consulta, motivo_consulta, anamnesis, revision_sistemas,
-			examen_fisico, hallazgos_clinicos,
-			presion_arterial, frecuencia_cardiaca, frecuencia_respiratoria,
-			temperatura, saturacion_oxigeno, peso_kg, talla_cm,
-			diagnostico_principal, diagnostico_cie10, plan_manejo,
-			procedimientos_indicados, observaciones_medico, pre_diagnostico,
-			proxima_cita, fecha_consulta, estado_consulta
-		) VALUES (
-			$1, $2, $3,
-			$4, $5, $6, $7,
-			$8, $9,
-			$10, $11, $12,
-			$13, $14, $15, $16,
-			$17, $18, $19,
-			$20, $21, $22,
-			$23, NOW(), 'completada'
-		) RETURNING id, fecha_consulta`,
-		historiaClinicaID, pacienteID, medicoID,
-		req.TipoConsulta, req.MotivoConsulta, req.Anamnesis, req.RevisionSistemas,
-		req.ExamenFisico, req.HallazgosClinicos,
-		req.PresionArterial, req.FrecuenciaCardiaca, req.FrecuenciaRespiratoria,
-		req.Temperatura, req.SaturacionOxigeno, req.PesoKg, req.TallaCm,
-		req.DiagnosticoPrincipal, req.DiagnosticoCIE10, req.PlanManejo,
-		req.ProcedimientosIndicados, req.ObservacionesMedico, req.PreDiagnostico,
-		proximaCita,
-	).Scan(&consultaID, &fechaConsulta)
-	if err != nil {
-		log.Printf("create consulta error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create consulta"})
-		return
-	}
-
-	// Fórmula médica emitida durante la consulta (HU-06), si el médico recetó.
-	var formulaID *uuid.UUID
-	if len(req.Medicamentos) > 0 {
-		medicamentosJSON, err := json.Marshal(req.Medicamentos)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode medicamentos"})
-			return
-		}
-		var fid uuid.UUID
-		err = tx.QueryRow(ctx,
-			`INSERT INTO formula_medica
-			   (historia_clinica_id, paciente_id, medico_id, consulta_id, medicamentos,
-			    indicaciones, estado_formula)
-			 VALUES ($1, $2, $3, $4, $5, $6, 'vigente')
-			 RETURNING id`,
-			historiaClinicaID, pacienteID, medicoID, consultaID, medicamentosJSON,
-			req.FormulaIndicaciones,
-		).Scan(&fid)
-		if err != nil {
-			log.Printf("create formula error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create fórmula"})
-			return
-		}
-		formulaID = &fid
-	}
-
-	// La consulta atiende la cita programada de hoy: se marca como completada.
-	if _, err := tx.Exec(ctx,
-		`UPDATE cita SET estado = 'completada'
-		  WHERE paciente_id = $1 AND medico_id = $2
-		    AND estado = 'programada' AND fecha_hora::date = CURRENT_DATE`,
-		pacienteID, medicoID,
-	); err != nil {
-		log.Printf("marcar cita completada error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update cita"})
-		return
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		log.Printf("commit consulta error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save consulta"})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":                  consultaID,
-		"historia_clinica_id": historiaClinicaID,
-		"paciente_id":         pacienteID,
-		"fecha_consulta":      fechaConsulta,
-		"formula_id":          formulaID,
+		"id":                  res.ConsultaID,
+		"historia_clinica_id": res.HistoriaClinicaID,
+		"paciente_id":         res.PacienteID,
+		"fecha_consulta":      res.FechaConsulta,
+		"formula_id":          res.FormulaID,
 	})
 }
 
@@ -241,33 +123,24 @@ func (h *ConsultaHandler) UpdatePreDiagnostico(c *gin.Context) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
-	var medicoID uuid.UUID
-	if err := h.pool.QueryRow(ctx,
-		`SELECT id FROM medico WHERE usuario_id = $1`, userID,
-	).Scan(&medicoID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	medicoID, err := h.service.ResolveMedicoID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, repositories.ErrSoloMedico) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "solo un médico puede registrar el pre-diagnóstico"})
 			return
 		}
-		log.Printf("update pre_diagnostico lookup medico error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify médico"})
 		return
 	}
 
-	tag, err := h.pool.Exec(ctx,
-		`UPDATE consulta SET pre_diagnostico = $1
-		  WHERE id = $2 AND medico_id = $3`,
-		req.PreDiagnostico, consultaID, medicoID,
-	)
-	if err != nil {
-		log.Printf("update pre_diagnostico error: %v", err)
+	if err := h.service.UpdatePreDiagnostico(ctx, userID, consultaID, medicoID, req.PreDiagnostico); err != nil {
+		if errors.Is(err, repositories.ErrConsultaNoAutorizada) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "consulta no encontrada o no autorizada"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update pre-diagnóstico"})
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "consulta no encontrada o no autorizada"})
 		return
 	}
 
@@ -277,87 +150,29 @@ func (h *ConsultaHandler) UpdatePreDiagnostico(c *gin.Context) {
 // ListByPaciente maneja GET /api/v1/pacientes/:id/consultas (HU-04).
 // Devuelve el historial de consultas del paciente, de la más reciente a la más
 // antigua, incluyendo el médico que atendió cada consulta.
+//
+// Requiere sesión autenticada (ver routes.go): la lectura del historial
+// clínico completo de un paciente queda auditada como 'consultar'.
 func (h *ConsultaHandler) ListByPaciente(c *gin.Context) {
-	idParam := c.Param("id")
-	pacienteID, err := uuid.Parse(idParam)
+	userIDRaw, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+	userID, err := uuid.Parse(userIDRaw.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid session"})
+		return
+	}
+
+	pacienteID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid paciente id"})
 		return
 	}
 
-	rows, err := h.pool.Query(context.Background(),
-		`SELECT c.id, c.tipo_consulta, c.motivo_consulta, c.anamnesis, c.revision_sistemas,
-		        c.examen_fisico, c.hallazgos_clinicos,
-		        c.presion_arterial, c.frecuencia_cardiaca, c.frecuencia_respiratoria,
-		        c.temperatura, c.saturacion_oxigeno, c.peso_kg, c.talla_cm,
-		        c.diagnostico_principal, c.diagnostico_cie10, c.plan_manejo,
-		        c.procedimientos_indicados, c.observaciones_medico, c.pre_diagnostico,
-		        c.proxima_cita, c.fecha_consulta, c.estado_consulta,
-		        u.nombre_usuario, u.apellidos, m.especialidad,
-		        COALESCE((
-		          SELECT json_agg(json_build_object('id', e.id, 'nombre', e.descripcion, 'tipo', e.tipo_examen)
-		                          ORDER BY e.fecha_carga)
-		          FROM examinagen e WHERE e.consulta_id = c.id
-		        ), '[]') AS anexos,
-		        COALESCE((
-		          SELECT json_agg(json_build_object(
-		                   'id', s.id,
-		                   'examinagen_id', s.examinagen_id,
-		                   'modelo_ia_utilizado', s.modelo_ia_utilizado,
-		                   'estado_procesamiento', s.estado_procesamiento,
-		                   'diagnostico_sugerido', s.diagnostico_sugerido,
-		                   'descripcion_hallazgo', s.descripcion_hallazgo,
-		                   'estado_revision', s.estado_revision
-		                 ) ORDER BY s.fecha_analisis DESC)
-		          FROM sugerencia_ia s
-		          JOIN examinagen ex ON ex.id = s.examinagen_id
-		          WHERE ex.consulta_id = c.id
-		        ), '[]') AS sugerencias_ia
-		 FROM consulta c
-		 JOIN medico m ON m.id = c.medico_id
-		 JOIN usuario u ON u.id = m.usuario_id
-		 WHERE c.paciente_id = $1
-		 ORDER BY c.fecha_consulta DESC`,
-		pacienteID,
-	)
+	consultas, err := h.service.ListByPaciente(c.Request.Context(), userID, pacienteID)
 	if err != nil {
-		log.Printf("list consultas error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch consultas"})
-		return
-	}
-	defer rows.Close()
-
-	consultas := make([]models.ConsultaListItem, 0)
-	for rows.Next() {
-		var item models.ConsultaListItem
-		var nombre, apellidos string
-		var anexosJSON, sugerenciasJSON []byte
-		if err := rows.Scan(
-			&item.ID, &item.TipoConsulta, &item.MotivoConsulta, &item.Anamnesis, &item.RevisionSistemas,
-			&item.ExamenFisico, &item.HallazgosClinicos,
-			&item.PresionArterial, &item.FrecuenciaCardiaca, &item.FrecuenciaRespiratoria,
-			&item.Temperatura, &item.SaturacionOxigeno, &item.PesoKg, &item.TallaCm,
-			&item.DiagnosticoPrincipal, &item.DiagnosticoCIE10, &item.PlanManejo,
-			&item.ProcedimientosIndicados, &item.ObservacionesMedico, &item.PreDiagnostico,
-			&item.ProximaCita, &item.FechaConsulta, &item.EstadoConsulta,
-			&nombre, &apellidos, &item.MedicoEspecialidad, &anexosJSON, &sugerenciasJSON,
-		); err != nil {
-			log.Printf("scan consulta error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read consultas"})
-			return
-		}
-		item.MedicoNombre = nombre + " " + apellidos
-		if err := json.Unmarshal(anexosJSON, &item.Anexos); err != nil {
-			item.Anexos = []models.AnexoItem{}
-		}
-		if err := json.Unmarshal(sugerenciasJSON, &item.SugerenciasIA); err != nil {
-			item.SugerenciasIA = []models.SugerenciaIAItem{}
-		}
-		consultas = append(consultas, item)
-	}
-
-	if err := rows.Err(); err != nil {
-		log.Printf("rows error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch consultas"})
 		return
 	}
