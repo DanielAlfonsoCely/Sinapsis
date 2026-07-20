@@ -27,6 +27,20 @@ type CreateEntidadRequest struct {
 	Telefono      *string `json:"telefono"`
 }
 
+// PacienteEntidadItem es cada paciente del listado GET /api/v1/admin/entidades/:id/pacientes.
+type PacienteEntidadItem struct {
+	ID                uuid.UUID  `json:"id"`
+	NumeroDocumento   string     `json:"numero_documento"`
+	TipoDocumento     string     `json:"tipo_documento"`
+	NombrePaciente    string     `json:"nombre_paciente"`
+	ApellidosPaciente string     `json:"apellidos_paciente"`
+	Telefono          *string    `json:"telefono"`
+	Email             *string    `json:"email"`
+	Estado            bool       `json:"estado"`
+	FechaRegistro     time.Time  `json:"fecha_registro"`
+	UltimaConsulta    *time.Time `json:"ultima_consulta"`
+}
+
 // UpdateEntidadRequest es el cuerpo de PUT /api/v1/admin/entidades/:id.
 type UpdateEntidadRequest struct {
 	NombreEntidad string  `json:"nombre_entidad" binding:"required,max=150"`
