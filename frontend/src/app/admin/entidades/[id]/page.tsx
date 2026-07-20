@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
-import { Building2, ChevronLeft } from "lucide-react"
+import { Building2, ChevronLeft, Pencil, X } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 
@@ -156,6 +156,88 @@ export default function EntidadDetallePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // --- Estado modal de edición ---
+  const [showEditar, setShowEditar] = useState(false)
+  const [editForm, setEditForm] = useState({
+    nombre_entidad: "",
+    tipo_entidad: "IPS",
+    nit: "",
+    ciudad: "",
+    direccion: "",
+    telefono: "",
+    estado: true,
+  })
+  const [editError, setEditError] = useState<string | null>(null)
+  const [editLoading, setEditLoading] = useState(false)
+
+  function openEditar() {
+    if (!detalle) return
+    setEditForm({
+      nombre_entidad: detalle.nombre_entidad,
+      tipo_entidad: detalle.tipo_entidad,
+      nit: detalle.nit,
+      ciudad: detalle.ciudad ?? "",
+      direccion: detalle.direccion ?? "",
+      telefono: detalle.telefono ?? "",
+      estado: detalle.estado,
+    })
+    setEditError(null)
+    setShowEditar(true)
+  }
+
+  async function handleEditarSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setEditError(null)
+    setEditLoading(true)
+    try {
+      const token = document.cookie
+        .split("; ")
+        .find((c) => c.startsWith("token="))
+        ?.split("=")[1]
+      const res = await fetch(`http://localhost:8080/api/v1/admin/entidades/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token ?? ""}`,
+        },
+        body: JSON.stringify({
+          nombre_entidad: editForm.nombre_entidad,
+          tipo_entidad: editForm.tipo_entidad,
+          nit: editForm.nit,
+          ciudad: editForm.ciudad || null,
+          direccion: editForm.direccion || null,
+          telefono: editForm.telefono || null,
+          estado: editForm.estado,
+        }),
+      })
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      if (!res.ok) {
+        setEditError(data.error ?? "No se pudo actualizar la entidad.")
+        return
+      }
+      // Actualizar detalle local con los nuevos valores
+      setDetalle((prev) =>
+        prev
+          ? {
+              ...prev,
+              nombre_entidad: editForm.nombre_entidad,
+              tipo_entidad: editForm.tipo_entidad,
+              nit: editForm.nit,
+              ciudad: editForm.ciudad || null,
+              direccion: editForm.direccion || null,
+              telefono: editForm.telefono || null,
+              estado: editForm.estado,
+            }
+          : prev
+      )
+      setShowEditar(false)
+    } catch {
+      setEditError("Error de conexión con el servidor.")
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
   useEffect(() => {
     async function fetchDetalle() {
       try {
@@ -216,6 +298,144 @@ export default function EntidadDetallePage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Modal de edición */}
+      {showEditar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+          <Card className="flex w-full max-w-lg flex-col gap-5 p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg font-semibold text-ink">
+                Editar entidad de salud
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowEditar(false)}
+                className="text-muted hover:text-ink"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditarSubmit} className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    Nombre de la entidad
+                  </label>
+                  <input
+                    required
+                    maxLength={150}
+                    value={editForm.nombre_entidad}
+                    onChange={(e) => setEditForm({ ...editForm, nombre_entidad: e.target.value })}
+                    className="h-10 w-full rounded border border-line bg-field px-3 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    Tipo de entidad
+                  </label>
+                  <select
+                    value={editForm.tipo_entidad}
+                    onChange={(e) => setEditForm({ ...editForm, tipo_entidad: e.target.value })}
+                    className="h-10 w-full rounded border border-line bg-field px-3 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal"
+                  >
+                    <option value="IPS">IPS</option>
+                    <option value="EPS">EPS</option>
+                    <option value="clinica">Clínica</option>
+                    <option value="hospital">Hospital</option>
+                    <option value="consultorio">Consultorio</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    NIT
+                  </label>
+                  <input
+                    required
+                    maxLength={50}
+                    value={editForm.nit}
+                    onChange={(e) => setEditForm({ ...editForm, nit: e.target.value })}
+                    className="h-10 w-full rounded border border-line bg-field px-3 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    Ciudad
+                  </label>
+                  <input
+                    maxLength={100}
+                    value={editForm.ciudad}
+                    onChange={(e) => setEditForm({ ...editForm, ciudad: e.target.value })}
+                    className="h-10 w-full rounded border border-line bg-field px-3 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal"
+                    placeholder="Bogotá"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    Teléfono
+                  </label>
+                  <input
+                    maxLength={50}
+                    value={editForm.telefono}
+                    onChange={(e) => setEditForm({ ...editForm, telefono: e.target.value })}
+                    className="h-10 w-full rounded border border-line bg-field px-3 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal"
+                    placeholder="6012000000"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-[0.4px] text-muted">
+                    Dirección
+                  </label>
+                  <input
+                    maxLength={255}
+                    value={editForm.direccion}
+                    onChange={(e) => setEditForm({ ...editForm, direccion: e.target.value })}
+                    className="h-10 w-full rounded border border-line bg-field px-3 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal"
+                    placeholder="Calle 119 # 7-75"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    id="estado-check"
+                    type="checkbox"
+                    checked={editForm.estado}
+                    onChange={(e) => setEditForm({ ...editForm, estado: e.target.checked })}
+                    className="size-4 accent-teal"
+                  />
+                  <label htmlFor="estado-check" className="text-sm text-slate">
+                    Entidad activa
+                  </label>
+                </div>
+              </div>
+
+              {editError && <p className="text-sm text-danger">{editError}</p>}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditar(false)}
+                  className="rounded border border-line px-4 py-2 text-sm text-slate transition-colors hover:bg-field"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={editLoading}
+                  className="rounded bg-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-navy-800 disabled:opacity-60"
+                >
+                  {editLoading ? "Guardando…" : "Guardar cambios"}
+                </button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between border-b border-line pb-5">
         <div className="flex items-center gap-3">
@@ -232,13 +452,22 @@ export default function EntidadDetallePage() {
             </div>
           </div>
         </div>
-        <Link
-          href="/admin/entidades"
-          className="flex items-center gap-1 text-sm text-teal hover:underline"
-        >
-          <ChevronLeft className="size-4" />
-          Volver al listado
-        </Link>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={openEditar}
+            className="flex items-center gap-2 rounded border border-navy px-4 py-2 text-sm text-navy transition-colors hover:bg-navy hover:text-white"
+          >
+            <Pencil className="size-4" />
+            Editar entidad
+          </button>
+          <Link
+            href="/admin/entidades"
+            className="flex items-center gap-1 text-sm text-teal hover:underline"
+          >
+            <ChevronLeft className="size-4" />
+            Volver al listado
+          </Link>
+        </div>
       </div>
 
       {/* Datos generales + Convenios activos */}

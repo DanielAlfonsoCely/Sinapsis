@@ -239,6 +239,59 @@ func (h *EntidadHandler) GetByIDAdmin(c *gin.Context) {
 	c.JSON(http.StatusOK, detalle)
 }
 
+// UpdateAdmin maneja PUT /api/v1/admin/entidades/:id.
+// Solo accesible por admin_plataforma.
+func (h *EntidadHandler) UpdateAdmin(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id inválido"})
+		return
+	}
+
+	var req models.UpdateEntidadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var entidad models.Entidad
+	err = h.pool.QueryRow(
+		context.Background(),
+		`UPDATE entidad
+		 SET nombre_entidad = $1,
+		     tipo_entidad   = $2,
+		     nit            = $3,
+		     ciudad         = $4,
+		     direccion      = $5,
+		     telefono       = $6,
+		     estado         = $7
+		 WHERE id = $8
+		 RETURNING id, nombre_entidad, tipo_entidad, nit, direccion, telefono, ciudad, estado, fecha_creacion`,
+		req.NombreEntidad, req.TipoEntidad, req.NIT,
+		req.Ciudad, req.Direccion, req.Telefono, req.Estado,
+		id,
+	).Scan(
+		&entidad.ID, &entidad.NombreEntidad, &entidad.TipoEntidad, &entidad.NIT,
+		&entidad.Direccion, &entidad.Telefono, &entidad.Ciudad, &entidad.Estado, &entidad.FechaCreacion,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "entidad no encontrada"})
+			return
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			c.JSON(http.StatusConflict, gin.H{"error": "ya existe una entidad con ese NIT"})
+			return
+		}
+		log.Printf("update entidad error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update entidad"})
+		return
+	}
+
+	c.JSON(http.StatusOK, entidad)
+}
+
 // Stats maneja GET /api/v1/admin/stats.
 // Devuelve métricas globales de la plataforma para el dashboard admin.
 func (h *EntidadHandler) Stats(c *gin.Context) {

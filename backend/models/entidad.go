@@ -27,6 +27,17 @@ type CreateEntidadRequest struct {
 	Telefono      *string `json:"telefono"`
 }
 
+// UpdateEntidadRequest es el cuerpo de PUT /api/v1/admin/entidades/:id.
+type UpdateEntidadRequest struct {
+	NombreEntidad string  `json:"nombre_entidad" binding:"required,max=150"`
+	TipoEntidad   string  `json:"tipo_entidad" binding:"required,oneof=IPS EPS clinica hospital consultorio"`
+	NIT           string  `json:"nit" binding:"required,max=50"`
+	Ciudad        *string `json:"ciudad"`
+	Direccion     *string `json:"direccion"`
+	Telefono      *string `json:"telefono"`
+	Estado        bool    `json:"estado"`
+}
+
 // AdminEntidadListItem es cada elemento de GET /api/v1/admin/entidades.
 type AdminEntidadListItem struct {
 	ID            uuid.UUID `json:"id"`
