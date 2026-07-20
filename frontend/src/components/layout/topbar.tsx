@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, HelpCircle } from "lucide-react";
 
 export function Topbar() {
   const [usuario, setUsuario] = useState({
@@ -55,16 +54,8 @@ export function Topbar() {
           <p className="text-sm text-navy-800">{nombreCompleto}</p>
           <p className="text-xs uppercase tracking-[0.6px] text-muted">{rolDisplay}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button className="flex size-10 items-center justify-center rounded-xl text-slate transition-colors hover:bg-field">
-            <Bell className="size-5" />
-          </button>
-          <button className="flex size-10 items-center justify-center rounded-xl text-slate transition-colors hover:bg-field">
-            <HelpCircle className="size-5" />
-          </button>
-          <div className="flex size-10 items-center justify-center rounded-xl border border-line bg-navy font-display text-sm font-semibold text-white">
-            {initials}
-          </div>
+        <div className="flex size-10 items-center justify-center rounded-xl border border-line bg-navy font-display text-sm font-semibold text-white">
+          {initials}
         </div>
       </div>
     </header>
