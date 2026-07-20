@@ -585,43 +585,7 @@ export default function UsuariosPage() {
         })()}
       </Card>
 
-      {/* Footer de seguridad */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="p-6">
-          <div className="flex items-start gap-4">
-            <ShieldCheck className="mt-0.5 size-5 shrink-0 text-teal" />
-            <div>
-              <h4 className="font-display text-base font-semibold text-ink">
-                Política de Contraseñas
-              </h4>
-              <p className="mt-1 text-sm text-slate">
-                Todas las cuentas requieren contraseñas de mínimo 12 caracteres con
-                autenticación de dos factores habilitada.
-              </p>
-              <button className="mt-3 text-sm text-teal hover:text-teal-700">
-                Revisar política de acceso →
-              </button>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-6">
-          <div className="flex items-start gap-4">
-            <Users className="mt-0.5 size-5 shrink-0 text-teal" />
-            <div>
-              <h4 className="font-display text-base font-semibold text-ink">
-                Control de Roles
-              </h4>
-              <p className="mt-1 text-sm text-slate">
-                La asignación de roles se rige por el principio de mínimo
-                privilegio. Revisa regularmente los permisos de administrador.
-              </p>
-              <button className="mt-3 text-sm text-teal hover:text-teal-700">
-                Gestionar roles →
-              </button>
-            </div>
-          </div>
-        </Card>
-      </div>
+      {/* Footer de seguridad — eliminado */}
 
       {/* ------------------------------------------------------------------ */}
       {/* Modal: Crear Usuario                                              */}
