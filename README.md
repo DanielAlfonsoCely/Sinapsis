@@ -20,9 +20,11 @@ Docente: Liliana Marcela Olarte Mesa
 ## Tabla de contenido
 
 - [Descripción del sistema](#descripción-del-sistema)
+- [Modelos de IA utilizados](#modelos-de-ia-utilizados)
 - [Alcance del proyecto](#alcance-del-proyecto)
 - [Arquitectura](#arquitectura)
 - [Stack tecnológico](#stack-tecnológico)
+- [Modelos de IA para análisis médico](#modelos-de-ia-para-análisis-médico)
 - [Patrones de diseño](#patrones-de-diseño)
 - [Estructura del repositorio](#estructura-del-repositorio)
 - [Requisitos previos](#requisitos-previos)
@@ -96,6 +98,32 @@ El proyecto se compone de **tres subsistemas independientes**: un backend en Go,
 | Microservicio IA — inferencia | MONAI + PyTorch + torchvision | Framework especializado en imágenes médicas (NIfTI vía nibabel) |
 | Microservicio IA — mensajería | pika | Cliente RabbitMQ en Python |
 | Microservicio IA — validación | Pydantic v2 + pydantic-settings | Tipado de mensajes de la cola y configuración |
+
+## Modelos de IA para análisis médico
+
+El microservicio `sinapsis-ai` ejecuta inferencia con **bundles pre-entrenados del [MONAI Model Zoo](https://monai.io/model-zoo.html)**, cada uno mapeado a un `analysis_type` específico. Los modelos se descargan una sola vez desde MONAI Hosting y se cachean en el volumen `bundle_cache`, para no volver a descargarlos en cada reinicio del contenedor.
+
+| `analysis_type` | Modalidad | Tarea | Bundle (MONAI Model Zoo) |
+|---|---|---|---|
+| `ct_spleen_segmentation` | Tomografía computarizada (CT) | Segmentación de bazo | `spleen_ct_segmentation` |
+| `ct_lung_nodule_detection` | Tomografía computarizada (CT) | Detección de nódulos pulmonares | *lung nodule detection bundle* |
+| `mri_brain_tumor_segmentation` | Resonancia magnética (MRI) | Segmentación de tumor cerebral | *brain tumor segmentation bundle* |
+| `xr_breast_density_classification` | Rayos X (XR) | Clasificación de densidad mamaria | *breast density classification bundle* |
+
+**Cómo se seleccionan (patrón Strategy):** cada tipo de análisis tiene su propio adaptador en `infrastructure/bundle_adapters.py`, que implementa la interfaz común `BundleConfigAdapter`. `inference_engine.py` elige el adaptador correcto en tiempo de ejecución según el `analysis_type` recibido, sin acoplar el motor de inferencia a un modelo concreto — lo que facilita agregar nuevos modelos más adelante.
+
+**Restricciones y especificaciones:**
+
+- **Solo apoyo diagnóstico, no diagnóstico automatizado.** El microservicio no toma decisiones clínicas; el resultado del modelo se devuelve como sugerencia para que el médico la contraste con su propio criterio (HU-12).
+- **Pre-diagnóstico obligatorio antes de ver la sugerencia de IA (HU-13).** El médico debe registrar su impresión clínica inicial en la consulta antes de poder acceder a las herramientas de IA, para que el modelo no sesgue el razonamiento clínico.
+- **Trazabilidad del modelo (HU-14).** Cada sugerencia muestra qué modelo la generó junto con una advertencia ética estándar, para que el médico interprete el resultado con conocimiento de su origen y limitaciones.
+- **Autorización y auditoría fuera del microservicio.** La verificación de rol, la validación de pre-diagnóstico y el registro de auditoría ocurren en el backend en Go *antes* de que la solicitud llegue a la cola de RabbitMQ; el microservicio solo ejecuta el modelo.
+- **Ejecución asíncrona y desacoplada.** Si el servicio de IA está caído o aún descargando *bundles*, las solicitudes simplemente se acumulan en RabbitMQ y el resto de la plataforma sigue operando con normalidad.
+- **Tipos de análisis habilitados configurables.** La variable de entorno `ALLOWED_ANALYSIS_TYPES` (en `microservice/.env`) controla qué modelos están activos en una instancia dada.
+- **Dispositivo de inferencia configurable.** `MODEL_DEVICE` define si la inferencia corre en CPU o GPU.
+- **Persistencia de imágenes.** `IMAGE_STORAGE_BACKEND` define dónde se leen/escriben las imágenes analizadas; el volumen `uploads` es compartido entre el backend y el microservicio para que el worker de IA pueda leer las imágenes que el backend recibió.
+- **Formato de imágenes médicas.** El soporte de formatos como NIfTI se maneja vía `nibabel`, evitando reimplementar el preprocesamiento clínico de imágenes.
+- **Validación de mensajes.** Las solicitudes y resultados que entran/salen de la cola se tipan y validan con Pydantic v2, reduciendo errores en el borde de un sistema desacoplado por mensajería.
 
 ## Patrones de diseño
 
