@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
-import { Building2, ChevronLeft, Pencil, X } from "lucide-react"
+import { Building2, ChevronLeft, ChevronRight, Pencil, Search, Users, X } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 
@@ -17,6 +17,19 @@ interface UsuarioAsociado {
   nombre_usuario: string
   apellidos: string
   tipo_usuario: string
+}
+
+interface PacienteEntidadItem {
+  id: string
+  numero_documento: string
+  tipo_documento: string
+  nombre_paciente: string
+  apellidos_paciente: string
+  telefono: string | null
+  email: string | null
+  estado: boolean
+  fecha_registro: string
+  ultima_consulta: string | null
 }
 
 interface EntidadDetalle {
@@ -156,6 +169,13 @@ export default function EntidadDetallePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // --- Pacientes atendidos ---
+  const [pacientes, setPacientes] = useState<PacienteEntidadItem[]>([])
+  const [pacientesTotal, setPacientesTotal] = useState(0)
+  const [pacientesQuery, setPacientesQuery] = useState("")
+  const [pacientesPage, setPacientesPage] = useState(1)
+  const [loadingPacientes, setLoadingPacientes] = useState(false)
+
   // --- Estado modal de edición ---
   const [showEditar, setShowEditar] = useState(false)
   const [editForm, setEditForm] = useState({
@@ -238,6 +258,28 @@ export default function EntidadDetallePage() {
     }
   }
 
+  async function fetchPacientes(entidadId: string) {
+    setLoadingPacientes(true)
+    try {
+      const token = document.cookie
+        .split("; ")
+        .find((c) => c.startsWith("token="))
+        ?.split("=")[1]
+      const res = await fetch(
+        `http://localhost:8080/api/v1/admin/entidades/${entidadId}/pacientes`,
+        { headers: { Authorization: `Bearer ${token ?? ""}` } }
+      )
+      if (!res.ok) return
+      const data = await res.json() as { pacientes: PacienteEntidadItem[]; total: number }
+      setPacientes(data.pacientes)
+      setPacientesTotal(data.total)
+    } catch {
+      // silencioso — la tabla quedará vacía
+    } finally {
+      setLoadingPacientes(false)
+    }
+  }
+
   useEffect(() => {
     async function fetchDetalle() {
       try {
@@ -266,7 +308,10 @@ export default function EntidadDetallePage() {
         setLoading(false)
       }
     }
-    if (id) void fetchDetalle()
+    if (id) {
+      void fetchDetalle()
+      void fetchPacientes(id)
+    }
   }, [id])
 
   if (loading) {
@@ -569,6 +614,153 @@ export default function EntidadDetallePage() {
             </tbody>
           </table>
         )}
+      </Card>
+
+      {/* Pacientes atendidos */}
+      <Card className="p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Users className="size-4 text-teal" />
+            <h3 className="font-display text-base font-semibold text-ink">
+              Pacientes atendidos
+            </h3>
+            {pacientesTotal > 0 && (
+              <span className="rounded-full bg-teal/10 px-2 py-0.5 text-xs font-medium text-teal">
+                {pacientesTotal}
+              </span>
+            )}
+          </div>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted" />
+            <input
+              type="text"
+              value={pacientesQuery}
+              onChange={(e) => { setPacientesQuery(e.target.value); setPacientesPage(1) }}
+              placeholder="Filtrar por nombre o documento..."
+              className="h-9 w-64 rounded border border-line bg-field pl-8 pr-3 text-sm text-slate placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-teal"
+            />
+          </div>
+        </div>
+
+        {loadingPacientes && (
+          <p className="py-4 text-center text-sm text-muted">Cargando pacientes…</p>
+        )}
+        {!loadingPacientes && pacientes.length === 0 && (
+          <p className="text-sm text-muted">Sin pacientes atendidos en esta entidad.</p>
+        )}
+        {!loadingPacientes && pacientes.length > 0 && (() => {
+          const PAGE_SIZE = 10
+          const q = pacientesQuery.toLowerCase()
+          const filtered = q
+            ? pacientes.filter(
+                (p) =>
+                  p.nombre_paciente.toLowerCase().includes(q) ||
+                  p.apellidos_paciente.toLowerCase().includes(q) ||
+                  p.numero_documento.toLowerCase().includes(q)
+              )
+            : pacientes
+          const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+          const page = Math.min(pacientesPage, Math.max(totalPages, 1))
+          const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+          return (
+            <>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-[#e6f2fa] text-left text-xs uppercase tracking-[0.6px] text-label">
+                    <th className="px-4 py-3 font-normal">Paciente</th>
+                    <th className="px-4 py-3 font-normal">Documento</th>
+                    <th className="px-4 py-3 font-normal">Contacto</th>
+                    <th className="px-4 py-3 font-normal">Última consulta</th>
+                    <th className="px-4 py-3 font-normal">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paged.map((p) => (
+                    <tr key={p.id} className="border-t border-line hover:bg-field/30">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="flex size-7 items-center justify-center rounded-lg bg-teal/10 text-xs font-medium text-teal">
+                            {p.nombre_paciente.charAt(0).toUpperCase()}
+                            {p.apellidos_paciente.charAt(0).toUpperCase()}
+                          </span>
+                          <div>
+                            <p className="font-medium text-navy-800">
+                              {p.nombre_paciente} {p.apellidos_paciente}
+                            </p>
+                            {p.email && (
+                              <p className="text-xs text-muted">{p.email}</p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate">
+                        <span className="text-xs text-muted">{p.tipo_documento} </span>
+                        {p.numero_documento}
+                      </td>
+                      <td className="px-4 py-3 text-slate">{p.telefono ?? "—"}</td>
+                      <td className="px-4 py-3 text-slate">
+                        {p.ultima_consulta
+                          ? new Date(p.ultima_consulta).toLocaleDateString("es-CO")
+                          : "Sin consultas"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge tone={p.estado ? "success" : "neutral"}>
+                          {p.estado ? "Activo" : "Inactivo"}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                  {paged.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-6 text-center text-sm text-muted">
+                        Sin resultados para &quot;{pacientesQuery}&quot;.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+
+              {/* Paginación — solo si hay más de una página */}
+              {totalPages > 1 && (
+                <div className="mt-4 flex items-center justify-between border-t border-line pt-4">
+                  <p className="text-sm text-muted">
+                    Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} de {filtered.length} pacientes
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <button
+                      disabled={page === 1}
+                      onClick={() => setPacientesPage((p) => p - 1)}
+                      className="flex size-8 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ChevronLeft className="size-4" />
+                    </button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setPacientesPage(n)}
+                        className={`flex size-8 items-center justify-center rounded border text-sm transition-colors ${
+                          n === page
+                            ? "border-teal bg-teal text-white"
+                            : "border-line text-slate hover:bg-field"
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                    <button
+                      disabled={page >= totalPages}
+                      onClick={() => setPacientesPage((p) => p + 1)}
+                      className="flex size-8 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ChevronRight className="size-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )
+        })()}
       </Card>
 
       {/* Gráficas */}

@@ -239,6 +239,74 @@ func (h *EntidadHandler) GetByIDAdmin(c *gin.Context) {
 	c.JSON(http.StatusOK, detalle)
 }
 
+// ListPacientesAdmin maneja GET /api/v1/admin/entidades/:id/pacientes.
+// Devuelve los pacientes con historia clínica registrada en esta entidad.
+func (h *EntidadHandler) ListPacientesAdmin(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id inválido"})
+		return
+	}
+
+	// Verificar que la entidad existe
+	var existe bool
+	err = h.pool.QueryRow(
+		context.Background(),
+		`SELECT EXISTS(SELECT 1 FROM entidad WHERE id = $1)`,
+		id,
+	).Scan(&existe)
+	if err != nil || !existe {
+		c.JSON(http.StatusNotFound, gin.H{"error": "entidad no encontrada"})
+		return
+	}
+
+	rows, err := h.pool.Query(
+		context.Background(),
+		`SELECT
+		    p.id,
+		    p.numero_documento,
+		    p.tipo_documento,
+		    p.nombre_paciente,
+		    p.apellidos_paciente,
+		    p.telefono,
+		    p.email,
+		    p.estado,
+		    p.fecha_registro,
+		    MAX(c.fecha_consulta) AS ultima_consulta
+		 FROM historia_clinica hc
+		 JOIN paciente p ON p.id = hc.paciente_id
+		 LEFT JOIN consulta c ON c.paciente_id = p.id
+		 WHERE hc.entidad_id = $1
+		 GROUP BY p.id
+		 ORDER BY p.apellidos_paciente, p.nombre_paciente`,
+		id,
+	)
+	if err != nil {
+		log.Printf("list pacientes entidad error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch pacientes"})
+		return
+	}
+	defer rows.Close()
+
+	pacientes := make([]models.PacienteEntidadItem, 0)
+	for rows.Next() {
+		var p models.PacienteEntidadItem
+		if err := rows.Scan(
+			&p.ID, &p.NumeroDocumento, &p.TipoDocumento,
+			&p.NombrePaciente, &p.ApellidosPaciente,
+			&p.Telefono, &p.Email, &p.Estado, &p.FechaRegistro,
+			&p.UltimaConsulta,
+		); err != nil {
+			log.Printf("scan paciente entidad error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read pacientes"})
+			return
+		}
+		pacientes = append(pacientes, p)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"pacientes": pacientes, "total": len(pacientes)})
+}
+
 // UpdateAdmin maneja PUT /api/v1/admin/entidades/:id.
 // Solo accesible por admin_plataforma.
 func (h *EntidadHandler) UpdateAdmin(c *gin.Context) {
