@@ -25,6 +25,7 @@ func (s *AuditService) Record(
 	registroID *uuid.UUID,
 	ipOrigen *string,
 	detalles *string,
+	gravedad string,
 ) error {
 	return s.repo.Record(ctx, usuarioID, operacion, tabla, registroID, ipOrigen, detalles)
 }
