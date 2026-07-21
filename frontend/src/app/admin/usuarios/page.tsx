@@ -442,6 +442,21 @@ const handleExport = async () => {
           <Users className="size-4" />
           Crear Usuario
         </button>
+        <button
+        //Usa la primer consulta encontrada de usuario
+          onClick={() => openEditar(usuarios[0])}
+          className="flex items-center gap-2 rounded bg-navy px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-navy-800"
+        >
+          <Users className="size-4" />
+          Editar Usuario
+        </button>
+        <button
+          onClick={() => openBorrar(usuarios[0])}
+          className="flex items-center gap-2 rounded bg-navy px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-navy-800"
+        >
+          <Users className="size-4" />
+          Eliminar Usuario
+        </button>
         
       </div>
 
