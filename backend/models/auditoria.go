@@ -20,6 +20,8 @@ const (
 	AuditLogin            AuditOperation = "login"
 )
 
+type ImportanceLevel string
+
 const (
 	//Gravedad del evento
 	Critical    = "CRITICAL"
@@ -41,4 +43,5 @@ type AuditLogEntry struct {
 	IPOrigen          *string         `json:"ip_origen"`
 	Detalles          *string         `json:"detalles"`
 	FechaOperacion    time.Time       `json:"fecha_operacion"`
+	Gravedad          ImportanceLevel `json:"gravedad"`
 }
