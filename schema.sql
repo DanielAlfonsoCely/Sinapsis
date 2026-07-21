@@ -282,7 +282,8 @@ CREATE TABLE bitacora_auditoria (
     valores_nuevos JSONB,
     ip_origen VARCHAR(50),
     fecha_operacion TIMESTAMP DEFAULT NOW() NOT NULL,
-    detalles TEXT
+    detalles TEXT,
+    gravedad VARCHAR(20) NOT NULL DEFAULT 'CRITICAL'
 );
 
 -- ==============================================================================

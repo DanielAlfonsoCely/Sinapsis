@@ -17,6 +17,15 @@ const (
 	AuditExport           AuditOperation = "exportar"
 	AuditChangePermission AuditOperation = "cambiar_permisos"
 	AuditUseAI            AuditOperation = "usar_ia"
+	AuditLogin            AuditOperation = "login"
+)
+
+const (
+	//Gravedad del evento
+	Critical    = "CRITICAL"
+	High        = "HIGH"
+	Warning     = "WARNING"
+	Informative = "INFORMATIVE"
 )
 
 type AuditLogEntry struct {

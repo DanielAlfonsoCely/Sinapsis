@@ -124,9 +124,14 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 			admin.DELETE("/usuarios/:id", h.usuario.EliminarUsuario)
 			admin.PATCH("/usuarios/:id/rol", h.usuario.AsignarRol)
 			admin.GET("/auditoria", h.auditoria.List)
+			// Agregada: h.auditoria.LookCritical ya existía en el handler/servicio
+			// pero no estaba montada en ninguna ruta.
+			admin.GET("/auditoria/critical", h.auditoria.LookCritical)
 			admin.GET("/entidades", h.entidad.ListAdmin)
 			admin.GET("/entidades/:id", h.entidad.GetByIDAdmin)
 			admin.GET("/stats", h.entidad.Stats)
+			//añadir UsuariosTotales,
+			admin.GET("/usuarios/totales", h.usuario.UsuariosTotales)
 		}
 
 		entidades := api.Group("/entidades")
