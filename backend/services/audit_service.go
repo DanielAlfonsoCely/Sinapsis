@@ -32,3 +32,6 @@ func (s *AuditService) Record(
 func (s *AuditService) ListRecent(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
 	return s.repo.ListRecent(ctx, limit, offset)
 }
+func (s *AuditService) LookCritical(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
+	return s.repo.LookCritical(ctx, limit, offset)
+}

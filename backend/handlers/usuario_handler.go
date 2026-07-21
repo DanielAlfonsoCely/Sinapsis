@@ -167,7 +167,19 @@ func (h *UsuarioHandler) AsignarRol(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"mensaje": "Rol asignado correctamente"})
+	// Responder con un mensaje de éxito confirmando nombre, cc y rol
+	c.JSON(http.StatusOK, gin.H{"mensaje": "Rol asignado correctamente al usuario"})
+}
+
+func (h *UsuarioHandler) UsuariosTotales(c *gin.Context) {
+	total, err := h.service.UsuariosActivos(c.Request.Context())
+	if err != nil {
+		log.Printf("Error al obtener total de usuarios: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al obtener total de usuarios"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"total": total})
 }
 
 func (h *UsuarioHandler) ObtenerUsuarios(c *gin.Context) {

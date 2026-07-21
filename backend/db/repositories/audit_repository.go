@@ -88,3 +88,45 @@ func (r *AuditRepository) ListRecent(ctx context.Context, limit, offset int) ([]
 
 	return entries, total, nil
 }
+
+// critical and high severity events
+// LookCritical devuelve la página solicitada junto con el total real de registros críticos
+// en bitacora_auditoria (no el tamaño de la página).
+func (r *AuditRepository) LookCritical(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT al.id, al.usuario_id, u.nombre_usuario, u.email, al.tipo_operacion,
+		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion
+		 FROM bitacora_auditoria al
+		 JOIN usuario u ON u.id = al.usuario_id
+		 WHERE al.gravedad IN ('CRITICAL', 'HIGH')
+		 ORDER BY al.fecha_operacion DESC
+		 LIMIT $1 OFFSET $2`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	entries := make([]models.AuditLogEntry, 0)
+	for rows.Next() {
+		var e models.AuditLogEntry
+		if err := rows.Scan(
+			&e.ID, &e.UsuarioID, &e.UsuarioNombre, &e.UsuarioEmail, &e.TipoOperacion,
+			&e.TablaAfectada, &e.RegistroID, &e.IPOrigen, &e.Detalles, &e.FechaOperacion,
+		); err != nil {
+			return nil, 0, err
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM bitacora_auditoria WHERE gravedad IN ('CRITICAL', 'HIGH')`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	return entries, total, nil
+}

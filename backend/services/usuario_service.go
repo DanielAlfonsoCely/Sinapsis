@@ -78,3 +78,7 @@ func (s *UsuarioService) AssignRole(ctx context.Context, targetID, actorID uuid.
 func (s *UsuarioService) List(ctx context.Context, filters repositories.UsuarioFilters) ([]models.Usuario, int, error) {
 	return s.repo.List(ctx, filters)
 }
+
+func (s *UsuarioService) UsuariosActivos(ctx context.Context) (int, error) {
+	return s.repo.UsuariosActivos(ctx)
+}
