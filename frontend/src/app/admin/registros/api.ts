@@ -66,9 +66,22 @@ export async function fetchAuditoria(
 // frontend/src/app/admin/registros/api.ts
 // ... (todo lo existente igual, solo agrega esto al final)
 
-export function exportToCSV(rows: Record<string, string>[], filename: string) {
-  if (rows.length === 0) return
+export async function exportToCSV(rows: Record<string, string>[], filename: string) {
+  //Envía un registro de auditoría para la exportación
+  
+  await fetch(`${BASE_URL}/admin/auditoria`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({
+      tabla_afectada: "auditoria",
+      detalles: `Exportación de registros de auditoría a CSV`,
+    }),
+  }).catch((err) => console.error("Error al registrar auditoría:", err))
 
+  if (rows.length === 0) return
   const headers = Object.keys(rows[0])
   const escape = (value: string) => {
     const needsQuotes = /[",\n]/.test(value)
@@ -91,5 +104,6 @@ export function exportToCSV(rows: Record<string, string>[], filename: string) {
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
+
   URL.revokeObjectURL(url)
 }

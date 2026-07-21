@@ -17,15 +17,17 @@ import (
 
 	"sinapsis-backend/config"
 	"sinapsis-backend/models"
+	"sinapsis-backend/services"
 )
 
 type AuthHandler struct {
-	pool *pgxpool.Pool
-	cfg  *config.Config
+	pool         *pgxpool.Pool
+	cfg          *config.Config
+	auditService *services.AuditService
 }
 
-func NewAuthHandler(pool *pgxpool.Pool, cfg *config.Config) *AuthHandler {
-	return &AuthHandler{pool: pool, cfg: cfg}
+func NewAuthHandler(pool *pgxpool.Pool, cfg *config.Config, auditService *services.AuditService) *AuthHandler {
+	return &AuthHandler{pool: pool, cfg: cfg, auditService: auditService}
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
@@ -58,11 +60,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			return
 		}
 		log.Printf("register error: %v", err)
+		ip := c.ClientIP()
+		detalles := "Fallo en el registro de nuevo usuario"
+		_ = h.auditService.Record(c.Request.Context(), user.ID, models.AuditCreate, "usuario", &user.ID, &ip, &detalles, models.Informative)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
 		return
 	}
 
 	user.ID = id
+	ip := c.ClientIP()
+	detalles := "Registro de nuevo usuario"
+	_ = h.auditService.Record(c.Request.Context(), user.ID, models.AuditLogin, "usuario", &user.ID, &ip, &detalles, models.Informative)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"id":                  user.ID,
@@ -93,6 +101,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	).Scan(&id, &user.NombreUsuario, &user.Apellidos, &user.Email, &user.Contrasena, &user.TipoUsuario, &estado, &user.FechaCreacion, &user.FechaActualizacion)
 
 	if err != nil {
+		ip := c.ClientIP()
+		detalles := "Fallo en el login"
+		_ = h.auditService.Record(c.Request.Context(), user.ID, models.AuditLogin, "usuario", &user.ID, &ip, &detalles, models.Warning)
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
 			return
@@ -146,6 +157,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
 		return
 	}
+
+	ip := c.ClientIP()
+	detalles := "Login exitoso"
+	_ = h.auditService.Record(c.Request.Context(), user.ID, models.AuditLogin, "usuario", &user.ID, &ip, &detalles, models.Informative)
 
 	c.JSON(http.StatusOK, models.LoginResponse{
 		Token: tokenString,

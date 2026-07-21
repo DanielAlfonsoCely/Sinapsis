@@ -138,7 +138,7 @@ export default function RegistrosSistemaPage() {
     "IP origen": r.ip_origen ?? "",
     "Gravedad": r.gravedad,
   }));
-
+  //llama handler auditoria para exportar a csv
   const fecha = new Date().toISOString().slice(0, 10);
   exportToCSV(rows, `auditoria_sinapsis_${fecha}.csv`);
 };
