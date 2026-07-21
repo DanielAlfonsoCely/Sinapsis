@@ -20,7 +20,7 @@ func NewCitaService(repo *repositories.CitaRepository, publisher *audit.Publishe
 	return &CitaService{repo: repo, publisher: publisher}
 }
 
-func (s *CitaService) publishAudit(ctx context.Context, actorID uuid.UUID, op models.AuditOperation, tabla string, registroID *uuid.UUID, err error) {
+func (s *CitaService) publishAudit(ctx context.Context, actorID uuid.UUID, op models.AuditOperation, tabla string, registroID *uuid.UUID, err error, im models.ImportanceLevel) {
 	var detalles *string
 	if err != nil {
 		msg := err.Error()
@@ -34,6 +34,7 @@ func (s *CitaService) publishAudit(ctx context.Context, actorID uuid.UUID, op mo
 		RegistroID:     registroID,
 		Detalles:       detalles,
 		FechaOperacion: time.Now(),
+		Gravedad:       im,
 	})
 }
 
@@ -53,7 +54,7 @@ func (s *CitaService) Create(ctx context.Context, actorID, usuarioID, medicoID u
 		id := res.CitaID
 		registroID = &id
 	}
-	s.publishAudit(ctx, actorID, models.AuditCreate, "cita", registroID, err)
+	s.publishAudit(ctx, actorID, models.AuditCreate, "cita", registroID, err, models.Informative)
 	return res, err
 }
 

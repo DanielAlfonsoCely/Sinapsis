@@ -18,6 +18,7 @@ import {
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { StatCard } from "@/components/ui/stat-card"
+import { exportToCSV } from "./api"
 
 interface AdminUsuarioItem {
   id: string
@@ -107,6 +108,7 @@ export default function UsuariosPage() {
   const [rolFilter, setRolFilter] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [exportLoading, setExportLoading] = useState(false)
 
   // --- Estado de modales ---
   const [showCrear, setShowCrear] = useState(false)
@@ -148,6 +150,25 @@ export default function UsuariosPage() {
     if (!res.ok) throw new Error(`Error ${res.status}`)
     return res.json() as Promise<ListUsuariosResponse>
   }
+
+  // Agregar en ./api.ts (o donde tengas fetchUsuarios) se puede usar para búsquedas variadas
+
+async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsuarioItem[]> {
+  const token = getToken()
+  const params = new URLSearchParams({
+    limit: "1000000", // valor alto para traer todo lo que matchee el filtro
+    offset: "0",
+    ...(q && { q }),
+    ...(rol && { rol }),
+  })
+  const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 403) { window.location.href = "/login"; throw new Error("forbidden") }
+  if (!res.ok) throw new Error(`Error ${res.status}`)
+  const data = await res.json() as ListUsuariosResponse
+  return data.usuarios
+}
 
   const loadData = useCallback(async (q: string, rol: string, page: number) => {
     setLoading(true)
@@ -351,6 +372,53 @@ export default function UsuariosPage() {
     }
   }
 
+  // Handler dentro del componente UsuariosPage, junto a los demás handlers
+
+
+  // Handler dentro del componente UsuariosPage, junto a los demás handlers
+
+const handleExport = () => {
+  const rows = usuarios.map((u) => ({
+    "Nombre": u.nombre_usuario,
+    "Apellidos": u.apellidos,
+    "Email": u.email,
+    "Rol": u.tipo_usuario,
+    "Estado": u.estado ? "Activo" : "Inactivo",
+    "Entidad": u.entidad_nombre ?? "",
+    "Última actualización": new Date(u.fecha_actualizacion).toLocaleString("es-CO"),
+  }));
+
+  const fecha = new Date().toISOString().slice(0, 10);
+  exportToCSV(rows, `usuarios_sinapsis_${fecha}.csv`);
+};
+/*
+const handleExport = async () => {
+  setExportLoading(true)
+  setError(null)
+  try {
+    const todosLosUsuarios = await fetchUsuariosSinLimite(searchQuery, rolFilter)
+
+    const rows = todosLosUsuarios.map((u) => ({
+      "Nombre": u.nombre_usuario,
+      "Apellidos": u.apellidos,
+      "Email": u.email,
+      "Rol": u.tipo_usuario,
+      "Estado": u.estado ? "Activo" : "Inactivo",
+      "Entidad": u.entidad_nombre ?? "",
+      "Última actualización": new Date(u.fecha_actualizacion).toLocaleString("es-CO"),
+    }))
+
+    const fecha = new Date().toISOString().slice(0, 10)
+    exportToCSV(rows, `usuarios_sinapsis_${fecha}.csv`)
+  } catch (err) {
+    if (err instanceof Error && err.message !== "forbidden") {
+      setError("No se pudo exportar la lista de usuarios.")
+    }
+  } finally {
+    setExportLoading(false)
+  }
+}
+*/
   const inputClass =
     "w-full rounded border border-line bg-field px-3 py-2 text-sm text-slate placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-teal"
   const labelClass = "mb-1 block text-xs font-medium uppercase tracking-[0.4px] text-muted"
@@ -374,6 +442,7 @@ export default function UsuariosPage() {
           <Users className="size-4" />
           Crear Usuario
         </button>
+        
       </div>
 
       {/* Stats */}
@@ -427,7 +496,10 @@ export default function UsuariosPage() {
             <option value="admin_plataforma">Admin Plataforma</option>
           </select>
           <div className="ml-auto flex gap-2">
-            <button className="flex size-9 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field">
+            <button
+              onClick={handleExport}
+              className="flex size-9 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field"
+            >
               <Download className="size-4" />
             </button>
           </div>
