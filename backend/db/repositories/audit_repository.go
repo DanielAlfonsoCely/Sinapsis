@@ -18,7 +18,7 @@ type AuditRepository struct {
 // delega en Insert, para no duplicar la sentencia SQL.
 // FIX: antes hacía panic("unimplemented"); si algún llamador invocaba
 // AuditService.Record, tumbaba el proceso en producción.
-func (r *AuditRepository) Record(ctx context.Context, usuarioID uuid.UUID, operacion models.AuditOperation, tabla string, registroID *uuid.UUID, ipOrigen *string, detalles *string) error {
+func (r *AuditRepository) Record(ctx context.Context, usuarioID uuid.UUID, operacion models.AuditOperation, tabla string, registroID *uuid.UUID, ipOrigen *string, detalles *string, gravedad models.ImportanceLevel) error {
 	return r.Insert(ctx, models.AuditLogEntry{
 		ID:             uuid.New(),
 		UsuarioID:      usuarioID,
@@ -28,7 +28,7 @@ func (r *AuditRepository) Record(ctx context.Context, usuarioID uuid.UUID, opera
 		IPOrigen:       ipOrigen,
 		Detalles:       detalles,
 		FechaOperacion: time.Now(),
-		Gravedad:       models.Critical, // default value; could be parameterized if needed
+		Gravedad:       gravedad, // default value, can be adjusted as needed
 	})
 }
 
@@ -55,7 +55,7 @@ func (r *AuditRepository) Insert(ctx context.Context, entry models.AuditLogEntry
 func (r *AuditRepository) ListRecent(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT al.id, al.usuario_id, u.nombre_usuario, u.email, al.tipo_operacion,
-		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion, al.gravedad
+		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion,al.gravedad
 		 FROM bitacora_auditoria al
 		 JOIN usuario u ON u.id = al.usuario_id
 		 ORDER BY al.fecha_operacion DESC
@@ -90,10 +90,11 @@ func (r *AuditRepository) ListRecent(ctx context.Context, limit, offset int) ([]
 	return entries, total, nil
 }
 
+// critical and high severity events
 func (r *AuditRepository) LookCritical(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT al.id, al.usuario_id, u.nombre_usuario, u.email, al.tipo_operacion,
-		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion, al.gravedad
+		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion,al.gravedad
 		 FROM bitacora_auditoria al
 		 JOIN usuario u ON u.id = al.usuario_id
 		 WHERE al.gravedad IN ('CRITICAL', 'HIGH')
