@@ -17,7 +17,7 @@ const (
 	AuditExport           AuditOperation = "exportar"
 	AuditChangePermission AuditOperation = "cambiar_permisos"
 	AuditUseAI            AuditOperation = "usar_ia"
-	AuditLogin            AuditOperation = "login"
+	AuditLogin            AuditOperation = "iniciar_sesion"
 )
 
 type ImportanceLevel string

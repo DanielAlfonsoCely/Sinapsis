@@ -51,13 +51,18 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 	formulaRepo := repositories.NewFormulaRepository(pool)
 	formulaService := services.NewFormulaService(formulaRepo, auditPublisher)
 
+	entidadRepo := repositories.NewEntidadRepository(pool)
+	entidadService := services.NewEntidadService(entidadRepo, auditPublisher)
+
+	//authService := services.NewAuthService(pool, auditPublisher)h := &Handler{}
+
 	h := &Handler{
-		auth:               handlers.NewAuthHandler(pool, cfg),
+		auth:               handlers.NewAuthHandler(pool, cfg, auditService),
 		usuario:            handlers.NewUsuarioHandler(usuarioService),
 		paciente:           handlers.NewPacienteHandler(pool),
 		consulta:           handlers.NewConsultaHandler(consultaService),
 		cita:               handlers.NewCitaHandler(citaService),
-		entidad:            handlers.NewEntidadHandler(pool),
+		entidad:            handlers.NewEntidadHandler(entidadService),
 		formula:            handlers.NewFormulaHandler(formulaService),
 		anexo:              handlers.NewAnexoHandler(pool, cfg.UploadsDir),
 		auditoria:          handlers.NewAuditoriaHandler(auditService),
@@ -134,12 +139,13 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 			admin.GET("/stats", h.entidad.Stats)
 			//añadir UsuariosTotales,
 			admin.GET("/usuarios/totales", h.usuario.UsuariosTotales)
+			admin.POST("/auditoria", h.auditoria.RegistrarExportacion)
 		}
 
 		entidades := api.Group("/entidades")
 		{
 			entidades.GET("", middleware.RequireAuth(cfg), h.entidad.List)
-			entidades.POST("", middleware.RequireAuth(cfg), h.entidad.Create)
+			entidades.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("admin_plataforma"), h.entidad.Create)
 		}
 
 		formulas := api.Group("/formulas")

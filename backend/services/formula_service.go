@@ -20,7 +20,7 @@ func NewFormulaService(repo *repositories.FormulaRepository, publisher *audit.Pu
 	return &FormulaService{repo: repo, publisher: publisher}
 }
 
-func (s *FormulaService) publishAudit(ctx context.Context, actorID uuid.UUID, op models.AuditOperation, tabla string, registroID *uuid.UUID, err error) {
+func (s *FormulaService) publishAudit(ctx context.Context, actorID uuid.UUID, op models.AuditOperation, tabla string, registroID *uuid.UUID, err error, im models.ImportanceLevel) {
 	var detalles *string
 	if err != nil {
 		msg := err.Error()
@@ -34,6 +34,7 @@ func (s *FormulaService) publishAudit(ctx context.Context, actorID uuid.UUID, op
 		RegistroID:     registroID,
 		Detalles:       detalles,
 		FechaOperacion: time.Now(),
+		Gravedad:       im,
 	})
 }
 
@@ -49,7 +50,7 @@ func (s *FormulaService) Create(ctx context.Context, actorID, medicoID, paciente
 		id := res.FormulaID
 		registroID = &id
 	}
-	s.publishAudit(ctx, actorID, models.AuditCreate, "formula_medica", registroID, err)
+	s.publishAudit(ctx, actorID, models.AuditCreate, "formula_medica", registroID, err, models.Informative)
 	return res, err
 }
 
@@ -57,7 +58,7 @@ func (s *FormulaService) Create(ctx context.Context, actorID, medicoID, paciente
 // paciente es una lectura clínica sensible.
 func (s *FormulaService) ListByPaciente(ctx context.Context, actorID, pacienteID uuid.UUID) ([]models.FormulaListItem, error) {
 	items, err := s.repo.ListByPaciente(ctx, pacienteID)
-	s.publishAudit(ctx, actorID, models.AuditConsult, "formula_medica", &pacienteID, err)
+	s.publishAudit(ctx, actorID, models.AuditConsult, "formula_medica", &pacienteID, err, models.Informative)
 	return items, err
 }
 
@@ -66,6 +67,6 @@ func (s *FormulaService) ListByPaciente(ctx context.Context, actorID, pacienteID
 // más cercano semánticamente disponible hoy en el schema.
 func (s *FormulaService) Anular(ctx context.Context, actorID, formulaID, medicoID uuid.UUID) error {
 	err := s.repo.Anular(ctx, formulaID, medicoID)
-	s.publishAudit(ctx, actorID, models.AuditDelete, "formula_medica", &formulaID, err)
+	s.publishAudit(ctx, actorID, models.AuditDelete, "formula_medica", &formulaID, err, models.Critical)
 	return err
 }
