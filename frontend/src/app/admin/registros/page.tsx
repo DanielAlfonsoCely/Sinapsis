@@ -1,33 +1,24 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+
 import {
   ShieldAlert,
-  FileText,
   Search,
   Filter,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Eye,
   Download,
   RefreshCw,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { fetchAuditoria, exportToCSV, TipoOperacion, AuditLogEntry } from "./api";
 
 // ---------------------------------------------------------------------------
 // Tipos
 // ---------------------------------------------------------------------------
-type TipoOperacion =
-  | "crear"
-  | "actualizar"
-  | "eliminar"
-  | "consultar"
-  | "exportar"
-  | "cambiar_permisos"
-  | "usar_ia";
-
 type RegistroAuditoria = {
   id: string;
   usuario: string;
@@ -38,20 +29,7 @@ type RegistroAuditoria = {
   detalles: string | null;
   ip_origen: string | null;
   fecha_operacion: string;
-};
-
-// Forma en que llega del backend
-type AuditLogEntry = {
-  id: string;
-  usuario_id: string;
-  usuario_nombre: string;
-  usuario_email: string;
-  tipo_operacion: TipoOperacion;
-  tabla_afectada: string;
-  registro_id: string | null;
-  ip_origen: string | null;
-  detalles: string | null;
-  fecha_operacion: string;
+  gravedad: string;
 };
 
 const LIMIT = 50;
@@ -71,6 +49,8 @@ const OPERACION_STYLES: Record<
   cambiar_permisos: { tone: "warning", label: "Cambiar Permisos" },
   usar_ia:          { tone: "info",    label: "Usar IA" },
 };
+
+
 
 const TABLAS_LEGIBLES: Record<string, string> = {
   historia_clinica: "Historia Clínica",
@@ -101,11 +81,6 @@ function initials(nombre: string) {
     .join("")
     .toUpperCase();
 }
-
-function getToken() {
-  return document.cookie.split("; ").find((c) => c.startsWith("token="))?.split("=")[1];
-}
-
 // ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
@@ -122,34 +97,26 @@ export default function RegistrosSistemaPage() {
   const [detalle, setDetalle] = useState<RegistroAuditoria | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchRegistros = useCallback(async (page: number) => {
+  const cargarRegistros = useCallback(async (page: number) => {
     setLoading(true);
     setError(null);
     try {
-      const token = getToken();
-      const params = new URLSearchParams({
-        limit: String(LIMIT),
-        offset: String((page - 1) * LIMIT),
-      });
-      const res = await fetch(`http://localhost:8080/api/v1/admin/auditoria?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.status === 403) { window.location.href = "/login"; return; }
-      if (!res.ok) throw new Error(`Error ${res.status}`);
-      const data = await res.json() as { registros: AuditLogEntry[]; total: number };
+      const data = await fetchAuditoria(LIMIT, (page - 1) * LIMIT);
 
-      // Mapear campos del backend al tipo local
-      const mapped: RegistroAuditoria[] = (data.registros ?? []).map((e) => ({
-        id: e.id,
-        usuario: e.usuario_nombre,
-        usuarioEmail: e.usuario_email,
-        tipo_operacion: e.tipo_operacion,
-        tabla_afectada: e.tabla_afectada,
-        registro_id: e.registro_id ?? null,
-        detalles: e.detalles ?? null,
-        ip_origen: e.ip_origen ?? null,
-        fecha_operacion: e.fecha_operacion,
-      }));
+      const mapped: RegistroAuditoria[] = (data.registros ?? []).map(
+        (e: AuditLogEntry) => ({
+          id: e.id,
+          usuario: e.usuario_nombre,
+          usuarioEmail: e.usuario_email,
+          tipo_operacion: e.tipo_operacion,
+          tabla_afectada: e.tabla_afectada,
+          registro_id: e.registro_id,
+          detalles: e.detalles,
+          ip_origen: e.ip_origen,
+          fecha_operacion: e.fecha_operacion,
+          gravedad: e.gravedad ?? "",
+        })
+      );
 
       setRegistros(mapped);
       setTotal(data.total ?? 0);
@@ -160,9 +127,25 @@ export default function RegistrosSistemaPage() {
     }
   }, []);
 
+  const handleExport = () => {
+  const rows = filtered.map((r) => ({
+    "Fecha y hora": formatFecha(r.fecha_operacion),
+    "Usuario": r.usuario,
+    "Email": r.usuarioEmail,
+    "Operación": OPERACION_STYLES[r.tipo_operacion]?.label ?? r.tipo_operacion,
+    "Tabla afectada": TABLAS_LEGIBLES[r.tabla_afectada] ?? r.tabla_afectada,
+    "Detalles": r.detalles ?? "",
+    "IP origen": r.ip_origen ?? "",
+    "Gravedad": r.gravedad,
+  }));
+  //llama handler auditoria para exportar a csv
+  const fecha = new Date().toISOString().slice(0, 10);
+  exportToCSV(rows, `auditoria_sinapsis_${fecha}.csv`);
+};
+
   useEffect(() => {
-    void fetchRegistros(currentPage);
-  }, [currentPage, fetchRegistros]);
+    void cargarRegistros(currentPage);
+  }, [currentPage, cargarRegistros]);
 
   // Filtrado client-side sobre los registros ya cargados
   const filtered = registros.filter((r) => {
@@ -266,12 +249,16 @@ export default function RegistrosSistemaPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-2 rounded border border-line px-4 py-2.5 text-sm text-slate hover:bg-field">
+          <button
+            onClick={handleExport}
+            disabled={filtered.length === 0}
+            className="flex items-center gap-2 rounded border border-line px-4 py-2.5 text-sm text-slate hover:bg-field disabled:cursor-not-allowed disabled:opacity-40"
+          >
             <Download className="size-4" />
             Exportar
           </button>
           <button
-            onClick={() => void fetchRegistros(currentPage)}
+            onClick={() => void cargarRegistros(currentPage)}
             className="flex items-center gap-2 rounded border border-line px-4 py-2.5 text-sm text-slate hover:bg-field"
           >
             <RefreshCw className="size-4" />
