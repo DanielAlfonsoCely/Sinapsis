@@ -7,21 +7,16 @@ import {
   Users,
   CalendarDays,
   BrainCircuit,
-  ShieldCheck,
   LogOut,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand";
 import { cn } from "@/lib/utils";
 
-// Nota: "Nueva Consulta", "Historia Clínica" y "Fórmulas Médicas" no van en el
-// menú porque dependen del paciente seleccionado. Se acceden desde la columna
-// "Acción" de /pacientes.
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/pacientes", label: "Pacientes", icon: Users },
   { href: "/agenda", label: "Agenda", icon: CalendarDays },
   { href: "/analisis-ia", label: "Análisis IA", icon: BrainCircuit },
-  { href: "/auditoria", label: "Auditoría", icon: ShieldCheck },
 ];
 
 export function Sidebar() {

@@ -94,15 +94,7 @@ export default function LoginPage() {
             />
           </Field>
 
-          <Field
-            label="Contraseña"
-            htmlFor="password"
-            hint={
-              <a href="#" className="text-xs tracking-[0.6px] text-teal">
-                ¿Olvidó su contraseña?
-              </a>
-            }
-          >
+          <Field label="Contraseña" htmlFor="password">
             <Input
               id="password"
               type="password"
@@ -121,29 +113,7 @@ export default function LoginPage() {
             {!loading && <ArrowRight className="size-5" />}
           </Button>
         </form>
-
-        <div className="mt-6 border-t border-line pt-4 text-center text-sm text-slate">
-          ¿Problemas para acceder?{" "}
-          <a href="#" className="text-teal">
-            Contacte a TI
-          </a>
-        </div>
       </Card>
-
-      {/* Footer de cumplimiento */}
-      <footer className="flex flex-col items-center gap-1 pt-8 opacity-60">
-        <p className="text-xs tracking-[0.6px] text-label">
-          © 2026 SINAPSIS Health Systems. Todos los derechos reservados.
-        </p>
-        <div className="flex gap-4">
-          <a href="#" className="text-xs tracking-[0.6px] text-label underline">
-            Privacidad
-          </a>
-          <a href="#" className="text-xs tracking-[0.6px] text-label underline">
-            Términos
-          </a>
-        </div>
-      </footer>
     </div>
   );
 }

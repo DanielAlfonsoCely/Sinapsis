@@ -86,14 +86,17 @@ SELECT
     CASE
         WHEN u.tipo_usuario = 'medico'        THEN em.nombre_entidad
         WHEN u.tipo_usuario = 'admin_entidad' THEN ea.nombre_entidad
+        WHEN u.tipo_usuario = 'paciente'      THEN ehc.nombre_entidad
         ELSE NULL
     END AS entidad_nombre
 FROM usuario u
-LEFT JOIN medico               med ON med.usuario_id = u.id
-LEFT JOIN entidad              em  ON em.id = med.entidad_id
+LEFT JOIN medico                med ON med.usuario_id = u.id
+LEFT JOIN entidad               em  ON em.id = med.entidad_id
 LEFT JOIN administrador_entidad ae  ON ae.usuario_id  = u.id
-LEFT JOIN entidad              ea  ON ea.id = ae.entidad_id
-LEFT JOIN paciente             p   ON p.usuario_id    = u.id
+LEFT JOIN entidad               ea  ON ea.id = ae.entidad_id
+LEFT JOIN paciente              p   ON p.usuario_id   = u.id
+LEFT JOIN historia_clinica      hc  ON hc.paciente_id = p.id
+LEFT JOIN entidad               ehc ON ehc.id = hc.entidad_id
 WHERE
     (NULLIF($1, '') IS NULL OR (
         u.nombre_usuario   ILIKE '%' || $1 || '%' OR
@@ -102,7 +105,7 @@ WHERE
         p.numero_documento ILIKE '%' || $1 || '%'
     ))
     AND (NULLIF($2, '') IS NULL OR u.tipo_usuario = NULLIF($2, '')::tipo_usuario_enum)
-    AND ($3::uuid IS NULL OR med.entidad_id = $3 OR ae.entidad_id = $3)
+    AND ($3::uuid IS NULL OR med.entidad_id = $3 OR ae.entidad_id = $3 OR hc.entidad_id = $3)
 ORDER BY u.fecha_actualizacion DESC
 LIMIT  $4
 OFFSET $5`
@@ -147,9 +150,10 @@ SELECT
     COUNT(*) FILTER (WHERE u.estado = true)      AS total_activos,
     COUNT(*) FILTER (WHERE u.estado = false)     AS total_inactivos
 FROM usuario u
-LEFT JOIN medico               med ON med.usuario_id = u.id
+LEFT JOIN medico                med ON med.usuario_id = u.id
 LEFT JOIN administrador_entidad ae  ON ae.usuario_id  = u.id
-LEFT JOIN paciente             p   ON p.usuario_id    = u.id
+LEFT JOIN paciente              p   ON p.usuario_id   = u.id
+LEFT JOIN historia_clinica      hc  ON hc.paciente_id = p.id
 WHERE
     (NULLIF($1, '') IS NULL OR (
         u.nombre_usuario   ILIKE '%' || $1 || '%' OR
@@ -158,7 +162,7 @@ WHERE
         p.numero_documento ILIKE '%' || $1 || '%'
     ))
     AND (NULLIF($2, '') IS NULL OR u.tipo_usuario = NULLIF($2, '')::tipo_usuario_enum)
-    AND ($3::uuid IS NULL OR med.entidad_id = $3 OR ae.entidad_id = $3)`
+    AND ($3::uuid IS NULL OR med.entidad_id = $3 OR ae.entidad_id = $3 OR hc.entidad_id = $3)`
 
 	var total, totalActivos, totalInactivos int
 	err = h.pool.QueryRow(ctx, queryConteos, q, rol, entidadID).Scan(

@@ -7,7 +7,6 @@ import {
   ShieldCheck,
   UserX,
   Filter,
-  Download,
   Pencil,
   Trash2,
   Eye,
@@ -106,6 +105,7 @@ export default function UsuariosPage() {
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [rolFilter, setRolFilter] = useState("")
+  const [entidadFilter, setEntidadFilter] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [exportLoading, setExportLoading] = useState(false)
@@ -135,13 +135,14 @@ export default function UsuariosPage() {
   const [borrarError, setBorrarError] = useState<string | null>(null)
   const [borrarLoading, setBorrarLoading] = useState(false)
 
-  async function fetchUsuarios(q: string, rol: string, page: number) {
+  async function fetchUsuarios(q: string, rol: string, entidadId: string, page: number) {
     const token = getToken()
     const params = new URLSearchParams({
       limit: String(LIMIT),
       offset: String((page - 1) * LIMIT),
-      ...(q   && { q }),
-      ...(rol  && { rol }),
+      ...(q         && { q }),
+      ...(rol       && { rol }),
+      ...(entidadId && { entidad_id: entidadId }),
     })
     const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -176,7 +177,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
     try {
       const token = getToken()
       const [data, entidadesRes] = await Promise.all([
-        fetchUsuarios(q, rol, page),
+        fetchUsuarios(q, rol, entidadId, page),
         fetch("http://localhost:8080/api/v1/entidades", {
           headers: { Authorization: `Bearer ${token}` },
         }),
@@ -201,8 +202,8 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
   }, [])
 
   useEffect(() => {
-    void loadData(searchQuery, rolFilter, currentPage)
-  }, [currentPage, rolFilter, loadData])
+    void loadData(searchQuery, rolFilter, entidadFilter, currentPage)
+  }, [currentPage, rolFilter, entidadFilter, loadData])
 
   async function handleRolChange(userId: string, nuevoRol: string, index: number) {
     const rolAnterior = usuarios[index].tipo_usuario
@@ -227,7 +228,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
     setSearchQuery(value)
     setCurrentPage(1)
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => void loadData(value, rolFilter, 1), 400)
+    debounceRef.current = setTimeout(() => void loadData(value, rolFilter, entidadFilter, 1), 400)
   }
 
   // -------------------------------------------------------------------
@@ -279,7 +280,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
       }
       setShowCrear(false)
       setCurrentPage(1)
-      void loadData(searchQuery, rolFilter, 1)
+      void loadData(searchQuery, rolFilter, entidadFilter, 1)
     } catch (err) {
       setCrearError(err instanceof Error ? err.message : "No se pudo crear el usuario.")
     } finally {
@@ -332,7 +333,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
         throw new Error(body?.error ?? `Error ${res.status}`)
       }
       setShowEditar(false)
-      void loadData(searchQuery, rolFilter, currentPage)
+      void loadData(searchQuery, rolFilter, entidadFilter, currentPage)
     } catch (err) {
       setEditarError(err instanceof Error ? err.message : "No se pudo editar el usuario.")
     } finally {
@@ -364,7 +365,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
         throw new Error(body?.error ?? `Error ${res.status}`)
       }
       setShowBorrar(false)
-      void loadData(searchQuery, rolFilter, currentPage)
+      void loadData(searchQuery, rolFilter, entidadFilter, currentPage)
     } catch (err) {
       setBorrarError(err instanceof Error ? err.message : "No se pudo eliminar el usuario.")
     } finally {
@@ -496,7 +497,7 @@ const handleExport = async () => {
             type="text"
             value={searchQuery}
             onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="Buscar usuario..."
+            placeholder="Buscar por nombre, email..."
             className="rounded border border-line bg-field px-3 py-2 text-sm text-slate placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-teal"
           />
           <select
@@ -518,6 +519,16 @@ const handleExport = async () => {
               <Download className="size-4" />
             </button>
           </div>
+          <select
+            value={entidadFilter}
+            onChange={(e) => { setEntidadFilter(e.target.value); setCurrentPage(1) }}
+            className="rounded border border-line bg-field px-3 py-2 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal"
+          >
+            <option value="">Todas las entidades</option>
+            {entidades.map((ent) => (
+              <option key={ent.id} value={ent.id}>{ent.nombre_entidad}</option>
+            ))}
+          </select>
         </div>
       </Card>
 
@@ -672,43 +683,7 @@ const handleExport = async () => {
         })()}
       </Card>
 
-      {/* Footer de seguridad */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card className="p-6">
-          <div className="flex items-start gap-4">
-            <ShieldCheck className="mt-0.5 size-5 shrink-0 text-teal" />
-            <div>
-              <h4 className="font-display text-base font-semibold text-ink">
-                Política de Contraseñas
-              </h4>
-              <p className="mt-1 text-sm text-slate">
-                Todas las cuentas requieren contraseñas de mínimo 12 caracteres con
-                autenticación de dos factores habilitada.
-              </p>
-              <button className="mt-3 text-sm text-teal hover:text-teal-700">
-                Revisar política de acceso →
-              </button>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-6">
-          <div className="flex items-start gap-4">
-            <Users className="mt-0.5 size-5 shrink-0 text-teal" />
-            <div>
-              <h4 className="font-display text-base font-semibold text-ink">
-                Control de Roles
-              </h4>
-              <p className="mt-1 text-sm text-slate">
-                La asignación de roles se rige por el principio de mínimo
-                privilegio. Revisa regularmente los permisos de administrador.
-              </p>
-              <button className="mt-3 text-sm text-teal hover:text-teal-700">
-                Gestionar roles →
-              </button>
-            </div>
-          </div>
-        </Card>
-      </div>
+      {/* Footer de seguridad — eliminado */}
 
       {/* ------------------------------------------------------------------ */}
       {/* Modal: Crear Usuario                                              */}

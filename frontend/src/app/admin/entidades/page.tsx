@@ -4,8 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import {
   Building2,
-  Users,
-  BarChart2,
   Plus,
   Search,
   MapPin,
@@ -481,26 +479,28 @@ export default function EntidadesPage() {
         <p className="text-sm text-muted">
           {total > 0 ? `Mostrando ${entidades.length} de ${total} entidades` : "Sin entidades"}
         </p>
-        <div className="flex items-center gap-1">
-          <button className="flex size-8 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field">
-            <ChevronLeft className="size-4" />
-          </button>
-          {[1, 2, 3].map((p) => (
-            <button
-              key={p}
-              className={`flex size-8 items-center justify-center rounded border text-sm transition-colors ${
-                p === 1
-                  ? "border-teal bg-teal text-white"
-                  : "border-line text-slate hover:bg-field"
-              }`}
-            >
-              {p}
+        {total > entidades.length && (
+          <div className="flex items-center gap-1">
+            <button className="flex size-8 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field">
+              <ChevronLeft className="size-4" />
             </button>
-          ))}
-          <button className="flex size-8 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field">
-            <ChevronRight className="size-4" />
-          </button>
-        </div>
+            {[1, 2, 3].map((p) => (
+              <button
+                key={p}
+                className={`flex size-8 items-center justify-center rounded border text-sm transition-colors ${
+                  p === 1
+                    ? "border-teal bg-teal text-white"
+                    : "border-line text-slate hover:bg-field"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+            <button className="flex size-8 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field">
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
