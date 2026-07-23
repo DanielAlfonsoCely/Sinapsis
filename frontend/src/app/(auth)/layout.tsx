@@ -1,4 +1,3 @@
-import { HelpCircle } from "lucide-react";
 import { Wordmark } from "@/components/brand";
 
 export default function AuthLayout({
@@ -10,7 +9,7 @@ export default function AuthLayout({
     <div className="flex min-h-full flex-col bg-canvas">
       {/* Header de identidad institucional */}
       <header className="flex h-16 items-center justify-center border-b border-line bg-shell px-8">
-        <div className="flex w-full max-w-[1440px] items-center justify-between">
+        <div className="flex w-full max-w-[1440px] items-center">
           <div className="flex items-center gap-4">
             <Wordmark />
             <span className="h-6 w-px bg-line" />
@@ -18,10 +17,6 @@ export default function AuthLayout({
               Centro Médico Central
             </span>
           </div>
-          <button className="flex items-center gap-1.5 text-sm text-slate transition-colors hover:text-teal">
-            <HelpCircle className="size-5" />
-            Soporte Técnico
-          </button>
         </div>
       </header>
 

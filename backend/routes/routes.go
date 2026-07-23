@@ -134,6 +134,8 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 			admin.GET("/auditoria/critical", h.auditoria.LookCritical)
 			admin.GET("/entidades", h.entidad.ListAdmin)
 			admin.GET("/entidades/:id", h.entidad.GetByIDAdmin)
+			admin.GET("/entidades/:id/pacientes", h.entidad.ListPacientesAdmin)
+			admin.PUT("/entidades/:id", h.entidad.UpdateAdmin)
 			admin.GET("/stats", h.entidad.Stats)
 			//añadir UsuariosTotales,
 			admin.GET("/usuarios/totales", h.usuario.UsuariosTotales)
