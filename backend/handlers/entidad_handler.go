@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sinapsis-backend/db/repositories"
 	"sinapsis-backend/models"
@@ -15,10 +19,11 @@ import (
 
 type EntidadHandler struct {
 	service *services.EntidadService
+	pool    *pgxpool.Pool
 }
 
-func NewEntidadHandler(service *services.EntidadService) *EntidadHandler {
-	return &EntidadHandler{service: service}
+func NewEntidadHandler(service *services.EntidadService, pool *pgxpool.Pool) *EntidadHandler {
+	return &EntidadHandler{service: service, pool: pool}
 }
 
 // actorIDFromContext extrae el user_id crudo del contexto (para auditoría),
@@ -49,8 +54,8 @@ func (h *EntidadHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	entidad, err := h.service.Create(c.Request.Context(), actorID, req)
+	ip := c.ClientIP()
+	entidad, err := h.service.Create(c.Request.Context(), actorID, ip, req)
 	if err != nil {
 		if errors.Is(err, repositories.ErrEntidadDuplicada) {
 			c.JSON(http.StatusConflict, gin.H{"error": "ya existe una entidad con ese NIT"})
@@ -83,8 +88,9 @@ func (h *EntidadHandler) ListAdmin(c *gin.Context) {
 		return
 	}
 	q := c.DefaultQuery("q", "")
+	ip := c.ClientIP()
 
-	entidades, err := h.service.ListAdmin(c.Request.Context(), actorID, q)
+	entidades, err := h.service.ListAdmin(c.Request.Context(), actorID, ip, q)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch entidades"})
 		return
@@ -110,8 +116,8 @@ func (h *EntidadHandler) GetByIDAdmin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id inválido"})
 		return
 	}
-
-	detalle, err := h.service.GetByIDAdmin(c.Request.Context(), actorID, id)
+	ip := c.ClientIP()
+	detalle, err := h.service.GetByIDAdmin(c.Request.Context(), actorID, ip, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entidad no encontrada"})
@@ -193,6 +199,7 @@ func (h *EntidadHandler) ListPacientesAdmin(c *gin.Context) {
 }
 
 // UpdateAdmin maneja PUT /api/v1/admin/entidades/:id.
+// actualiza los datos de una entidad. Solo accesible por admin_plataforma (protegido por RequireAdmin middleware).
 // Solo accesible por admin_plataforma.
 func (h *EntidadHandler) UpdateAdmin(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
@@ -207,26 +214,17 @@ func (h *EntidadHandler) UpdateAdmin(c *gin.Context) {
 		return
 	}
 
+	actorID, ok := h.actorIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing session"})
+		return
+	}
+	ctx := c.Request.Context()
+
 	var entidad models.Entidad
-	err = h.pool.QueryRow(
-		context.Background(),
-		`UPDATE entidad
-		 SET nombre_entidad = $1,
-		     tipo_entidad   = $2,
-		     nit            = $3,
-		     ciudad         = $4,
-		     direccion      = $5,
-		     telefono       = $6,
-		     estado         = $7
-		 WHERE id = $8
-		 RETURNING id, nombre_entidad, tipo_entidad, nit, direccion, telefono, ciudad, estado, fecha_creacion`,
-		req.NombreEntidad, req.TipoEntidad, req.NIT,
-		req.Ciudad, req.Direccion, req.Telefono, req.Estado,
-		id,
-	).Scan(
-		&entidad.ID, &entidad.NombreEntidad, &entidad.TipoEntidad, &entidad.NIT,
-		&entidad.Direccion, &entidad.Telefono, &entidad.Ciudad, &entidad.Estado, &entidad.FechaCreacion,
-	)
+	ip := c.ClientIP()
+	entidad, err = h.service.UpdateAdmin(ctx, actorID, ip, id, req)
+
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entidad no encontrada"})
@@ -254,7 +252,7 @@ func (h *EntidadHandler) Stats(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.service.Stats(c.Request.Context(), actorID)
+	stats, err := h.service.Stats(c.Request.Context(), actorID, c.ClientIP())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch stats"})
 		return

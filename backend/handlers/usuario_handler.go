@@ -35,8 +35,8 @@ func (h *UsuarioHandler) CrearUsuario(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	user, err := h.service.Create(c.Request.Context(), actorID, req)
+	ip := c.ClientIP()
+	user, err := h.service.Create(c.Request.Context(), actorID, ip, req)
 	if err != nil {
 		switch {
 		case errors.Is(err, repositories.ErrDuplicateEmail):
@@ -84,8 +84,8 @@ func (h *UsuarioHandler) EditarUsuario(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	err = h.service.Update(c.Request.Context(), targetID, actorID, req)
+	ip := c.ClientIP()
+	err = h.service.Update(c.Request.Context(), targetID, actorID, ip, req)
 	if err != nil {
 		switch {
 		case errors.Is(err, repositories.ErrNoUpdateFields):
@@ -118,8 +118,8 @@ func (h *UsuarioHandler) EliminarUsuario(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID de usuario inválido"})
 		return
 	}
-
-	err = h.service.Delete(c.Request.Context(), targetID, adminID)
+	ip := c.ClientIP()
+	err = h.service.Delete(c.Request.Context(), targetID, adminID, ip)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrCannotDeleteSelf):
@@ -156,7 +156,8 @@ func (h *UsuarioHandler) AsignarRol(c *gin.Context) {
 		return
 	}
 
-	err = h.service.AssignRole(c.Request.Context(), targetID, actorID, req.TipoUsuario)
+	ip := c.ClientIP()
+	err = h.service.AssignRole(c.Request.Context(), targetID, actorID, ip, req.TipoUsuario)
 	if err != nil {
 		if errors.Is(err, repositories.ErrUsuarioNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Usuario no encontrado o inactivo"})

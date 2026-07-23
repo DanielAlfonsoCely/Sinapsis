@@ -12,6 +12,7 @@ import {
   Eye,
   ChevronLeft,
   ChevronRight,
+  Download,
   X,
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
@@ -161,6 +162,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
     offset: "0",
     ...(q && { q }),
     ...(rol && { rol }),
+    ...(entidadFilter && { entidad_id: entidadFilter }),
   })
   const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -171,7 +173,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
   return data.usuarios
 }
 
-  const loadData = useCallback(async (q: string, rol: string, page: number) => {
+  const loadData = useCallback(async (q: string, rol: string, entidadId: string, page: number) => {
     setLoading(true)
     setError(null)
     try {

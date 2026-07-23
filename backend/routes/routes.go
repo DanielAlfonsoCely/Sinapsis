@@ -62,7 +62,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 		paciente:           handlers.NewPacienteHandler(pool),
 		consulta:           handlers.NewConsultaHandler(consultaService),
 		cita:               handlers.NewCitaHandler(citaService),
-		entidad:            handlers.NewEntidadHandler(entidadService),
+		entidad:            handlers.NewEntidadHandler(entidadService, pool),
 		formula:            handlers.NewFormulaHandler(formulaService),
 		anexo:              handlers.NewAnexoHandler(pool, cfg.UploadsDir),
 		auditoria:          handlers.NewAuditoriaHandler(auditService),

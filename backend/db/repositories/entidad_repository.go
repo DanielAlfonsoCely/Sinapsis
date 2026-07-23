@@ -202,3 +202,25 @@ func (r *EntidadRepository) Stats(ctx context.Context) (PlatformStats, error) {
 	).Scan(&s.TotalConsultas, &s.TotalPacientesActivos, &s.TotalUsuariosActivos)
 	return s, err
 }
+
+func (r *EntidadRepository) UpdateAdmin(ctx context.Context, id uuid.UUID, req models.UpdateEntidadRequest) (models.Entidad, error) {
+	var e models.Entidad
+	err := r.pool.QueryRow(ctx, `UPDATE entidad
+		 SET nombre_entidad = $1,
+		     tipo_entidad   = $2,
+		     nit            = $3,
+		     ciudad         = $4,
+		     direccion      = $5,
+		     telefono       = $6,
+		     estado         = $7
+		 WHERE id = $8
+		 RETURNING id, nombre_entidad, tipo_entidad, nit, direccion, telefono, ciudad, estado, fecha_creacion`,
+		req.NombreEntidad, req.TipoEntidad, req.NIT,
+		req.Ciudad, req.Direccion, req.Telefono, req.Estado,
+		id,
+	).Scan(
+		&e.ID, &e.NombreEntidad, &e.TipoEntidad, &e.NIT,
+		&e.Direccion, &e.Telefono, &e.Ciudad, &e.Estado, &e.FechaCreacion,
+	)
+	return e, err
+}
