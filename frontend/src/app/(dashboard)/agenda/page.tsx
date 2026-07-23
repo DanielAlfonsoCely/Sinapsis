@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, Clock, User } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { API_URL } from '@/config/constants';
 
 // Franjas de media hora de 06:00 a 19:30 (mismo rango en que puede agendar el paciente).
 const HOURS = Array.from({ length: 28 }, (_, i) => {
@@ -110,7 +111,7 @@ export default function AgendaPage() {
       const token = localStorage.getItem("token");
       const fecha = toYMD(lunes);
       const res = await fetch(
-        `http://localhost:8080/api/v1/citas/semana?fecha=${fecha}`,
+        `${API_URL} /citas/semana?fecha=${fecha}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : undefined }
       );
       if (res.ok) {

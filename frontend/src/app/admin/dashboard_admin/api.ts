@@ -1,4 +1,6 @@
-const BASE_URL = "http://localhost:8080/api/v1"
+
+import { API_URL } from "@/config/constants"
+const BASE_URL = API_URL
 
 export type Gravedad = "CRITICAL" | "HIGH" | "WARNING" | "INFORMATIVE"
 

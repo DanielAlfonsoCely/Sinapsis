@@ -19,6 +19,7 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { StatCard } from "@/components/ui/stat-card"
 import { exportToCSV } from "./api"
+import { API_URL } from "@/config/constants"
 
 interface AdminUsuarioItem {
   id: string
@@ -145,7 +146,7 @@ export default function UsuariosPage() {
       ...(rol       && { rol }),
       ...(entidadId && { entidad_id: entidadId }),
     })
-    const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios?${params}`, {
+    const res = await fetch(`${API_URL}/admin/usuarios?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (res.status === 403) { window.location.href = "/login"; throw new Error("forbidden") }
@@ -164,7 +165,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
     ...(rol && { rol }),
     ...(entidadFilter && { entidad_id: entidadFilter }),
   })
-  const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios?${params}`, {
+  const res = await fetch(`${API_URL}/admin/usuarios?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (res.status === 403) { window.location.href = "/login"; throw new Error("forbidden") }
@@ -180,7 +181,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
       const token = getToken()
       const [data, entidadesRes] = await Promise.all([
         fetchUsuarios(q, rol, entidadId, page),
-        fetch("http://localhost:8080/api/v1/entidades", {
+        fetch(`${API_URL}/api/v1/entidades`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ])
@@ -212,7 +213,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
     setUsuarios(prev => prev.map((u, i) => i === index ? { ...u, tipo_usuario: nuevoRol } : u))
     try {
       const token = getToken()
-      const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios/${userId}/rol`, {
+      const res = await fetch(`${API_URL}/admin/usuarios/${userId}/rol`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ tipo_usuario: nuevoRol }),
@@ -271,7 +272,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
         payload.entidad_id = crearForm.entidad_id
       }
 
-      const res = await fetch("http://localhost:8080/api/v1/admin/usuarios", {
+      const res = await fetch(`${API_URL}/admin/usuarios`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
@@ -320,7 +321,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
     setEditarLoading(true)
     try {
       const token = getToken()
-      const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios/${usuarioEditar.id}`, {
+      const res = await fetch(`${API_URL}/admin/usuarios/${usuarioEditar.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -358,7 +359,7 @@ async function fetchUsuariosSinLimite(q: string, rol: string): Promise<AdminUsua
     setBorrarLoading(true)
     try {
       const token = getToken()
-      const res = await fetch(`http://localhost:8080/api/v1/admin/usuarios/${usuarioBorrar.id}`, {
+      const res = await fetch(`${API_URL}/admin/usuarios/${usuarioBorrar.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       })

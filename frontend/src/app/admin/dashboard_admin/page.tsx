@@ -15,6 +15,7 @@ import {
   Gravedad,
 } from "./api"
 
+
 const NODE_STATUS = [
   { name: "Central General IPS", lat: "0.04ms", sync: "Activa", color: "bg-success" },
   { name: "Norte Diagnostic Lab", lat: "1.2ms", sync: "Ocupada", color: "bg-warning" },

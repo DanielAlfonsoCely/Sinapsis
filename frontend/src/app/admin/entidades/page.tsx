@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 //importa api de auditoria para exportar a csv
 import { exportToCSV } from "../registros/api";
+import { API_URL } from "@/config/constants";
 
 // ── Tipos para el listado dinámico ─────────────────────────────────────────
 
@@ -92,7 +93,7 @@ export default function EntidadesPage() {
         .split("; ")
         .find((c) => c.startsWith("token="))
         ?.split("=")[1]
-      const res = await fetch("http://localhost:8080/api/v1/admin/stats", {
+      const res = await fetch(`${API_URL}/admin/stats`, {
         headers: { Authorization: `Bearer ${token ?? ""}` },
       })
       if (!res.ok) return
@@ -140,7 +141,7 @@ export default function EntidadesPage() {
     setError("");
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://localhost:8080/api/v1/entidades", {
+      const res = await fetch(`${API_URL}/entidades`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -179,7 +180,7 @@ export default function EntidadesPage() {
       const params = new URLSearchParams();
       if (q) params.set("q", q);
       const res = await fetch(
-        `http://localhost:8080/api/v1/admin/entidades?${params.toString()}`,
+        `${API_URL}/admin/entidades?${params.toString()}`,
         { headers: { Authorization: `Bearer ${token ?? ""}` } }
       );
       if (res.status === 403) {
