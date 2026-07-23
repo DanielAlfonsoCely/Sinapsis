@@ -18,7 +18,7 @@ type AuditRepository struct {
 // delega en Insert, para no duplicar la sentencia SQL.
 // FIX: antes hacía panic("unimplemented"); si algún llamador invocaba
 // AuditService.Record, tumbaba el proceso en producción.
-func (r *AuditRepository) Record(ctx context.Context, usuarioID uuid.UUID, operacion models.AuditOperation, tabla string, registroID *uuid.UUID, ipOrigen *string, detalles *string) error {
+func (r *AuditRepository) Record(ctx context.Context, usuarioID uuid.UUID, operacion models.AuditOperation, tabla string, registroID *uuid.UUID, ipOrigen *string, detalles *string, gravedad models.ImportanceLevel) error {
 	return r.Insert(ctx, models.AuditLogEntry{
 		ID:             uuid.New(),
 		UsuarioID:      usuarioID,
@@ -28,6 +28,7 @@ func (r *AuditRepository) Record(ctx context.Context, usuarioID uuid.UUID, opera
 		IPOrigen:       ipOrigen,
 		Detalles:       detalles,
 		FechaOperacion: time.Now(),
+		Gravedad:       gravedad, // default value, can be adjusted as needed
 	})
 }
 
@@ -38,10 +39,10 @@ func NewAuditRepository(pool *pgxpool.Pool) *AuditRepository {
 func (r *AuditRepository) Insert(ctx context.Context, entry models.AuditLogEntry) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO bitacora_auditoria
-   (id, usuario_id, tipo_operacion, tabla_afectada, registro_id, valores_anteriores, valores_nuevos, ip_origen, detalles, fecha_operacion)
- VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+   (id, usuario_id, tipo_operacion, tabla_afectada, registro_id, valores_anteriores, valores_nuevos, ip_origen, detalles, fecha_operacion, gravedad)
+ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		entry.ID, entry.UsuarioID, entry.TipoOperacion, entry.TablaAfectada,
-		entry.RegistroID, entry.ValoresAnteriores, entry.ValoresNuevos, entry.IPOrigen, entry.Detalles, entry.FechaOperacion,
+		entry.RegistroID, entry.ValoresAnteriores, entry.ValoresNuevos, entry.IPOrigen, entry.Detalles, entry.FechaOperacion, entry.Gravedad,
 	)
 	return err
 }
@@ -54,7 +55,7 @@ func (r *AuditRepository) Insert(ctx context.Context, entry models.AuditLogEntry
 func (r *AuditRepository) ListRecent(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT al.id, al.usuario_id, u.nombre_usuario, u.email, al.tipo_operacion,
-		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion
+		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion,al.gravedad
 		 FROM bitacora_auditoria al
 		 JOIN usuario u ON u.id = al.usuario_id
 		 ORDER BY al.fecha_operacion DESC
@@ -71,7 +72,7 @@ func (r *AuditRepository) ListRecent(ctx context.Context, limit, offset int) ([]
 		var e models.AuditLogEntry
 		if err := rows.Scan(
 			&e.ID, &e.UsuarioID, &e.UsuarioNombre, &e.UsuarioEmail, &e.TipoOperacion,
-			&e.TablaAfectada, &e.RegistroID, &e.IPOrigen, &e.Detalles, &e.FechaOperacion,
+			&e.TablaAfectada, &e.RegistroID, &e.IPOrigen, &e.Detalles, &e.FechaOperacion, &e.Gravedad,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -83,6 +84,46 @@ func (r *AuditRepository) ListRecent(ctx context.Context, limit, offset int) ([]
 
 	var total int
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM bitacora_auditoria`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	return entries, total, nil
+}
+
+// critical and high severity events
+func (r *AuditRepository) LookCritical(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT al.id, al.usuario_id, u.nombre_usuario, u.email, al.tipo_operacion,
+		        al.tabla_afectada, al.registro_id, al.ip_origen, al.detalles, al.fecha_operacion,al.gravedad
+		 FROM bitacora_auditoria al
+		 JOIN usuario u ON u.id = al.usuario_id
+		 WHERE al.gravedad IN ('CRITICAL', 'HIGH')
+		 ORDER BY al.fecha_operacion DESC
+		 LIMIT $1 OFFSET $2`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	entries := make([]models.AuditLogEntry, 0)
+	for rows.Next() {
+		var e models.AuditLogEntry
+		if err := rows.Scan(
+			&e.ID, &e.UsuarioID, &e.UsuarioNombre, &e.UsuarioEmail, &e.TipoOperacion,
+			&e.TablaAfectada, &e.RegistroID, &e.IPOrigen, &e.Detalles, &e.FechaOperacion, &e.Gravedad,
+		); err != nil {
+			return nil, 0, err
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM bitacora_auditoria WHERE gravedad IN ('CRITICAL', 'HIGH')`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 

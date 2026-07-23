@@ -25,10 +25,15 @@ func (s *AuditService) Record(
 	registroID *uuid.UUID,
 	ipOrigen *string,
 	detalles *string,
+	gravedad models.ImportanceLevel,
 ) error {
-	return s.repo.Record(ctx, usuarioID, operacion, tabla, registroID, ipOrigen, detalles)
+	return s.repo.Record(ctx, usuarioID, operacion, tabla, registroID, ipOrigen, detalles, gravedad)
 }
 
 func (s *AuditService) ListRecent(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
 	return s.repo.ListRecent(ctx, limit, offset)
+}
+
+func (s *AuditService) LookCritical(ctx context.Context, limit, offset int) ([]models.AuditLogEntry, int, error) {
+	return s.repo.LookCritical(ctx, limit, offset)
 }
