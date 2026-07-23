@@ -165,7 +165,7 @@ func (r *UsuarioRepository) Update(ctx context.Context, id uuid.UUID, req models
 	}
 
 	setClause := builder.Build(", ")
-	query := `UPDATE usuario SET ` + setClause + ", fecha_actualizacion = NOW() WHERE id = $" + strconv.Itoa(len(builder.Args())+1) + " AND estado = true"
+	query := `UPDATE usuario SET ` + setClause + ", fecha_actualizacion = NOW() WHERE id = $" + strconv.Itoa(len(builder.Args())+1)
 	args := append(builder.Args(), id)
 
 	tag, err := r.pool.Exec(ctx, query, args...)

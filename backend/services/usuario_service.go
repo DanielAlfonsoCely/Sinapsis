@@ -55,7 +55,8 @@ func (s *UsuarioService) Create(ctx context.Context, actorID uuid.UUID, req mode
 
 func (s *UsuarioService) Update(ctx context.Context, targetID, actorID uuid.UUID, req models.UpdateUserRequest) error {
 	err := s.repo.Update(ctx, targetID, req)
-	s.publishAudit(ctx, actorID, models.AuditUpdate, targetID, err, models.Informative)
+
+	s.publishAudit(ctx, actorID, models.AuditUpdate, targetID, err, models.High)
 	return err
 }
 
@@ -66,7 +67,7 @@ func (s *UsuarioService) Delete(ctx context.Context, targetID, actorID uuid.UUID
 		return err
 	}
 	err := s.repo.Deactivate(ctx, targetID)
-	s.publishAudit(ctx, actorID, models.AuditDelete, targetID, err, models.Warning)
+	s.publishAudit(ctx, actorID, models.AuditDelete, targetID, err, models.High)
 	return err
 }
 
