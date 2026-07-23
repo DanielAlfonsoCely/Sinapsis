@@ -18,6 +18,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import { API_URL } from "@/config/constants";
 
 const selectClass =
   "h-11 w-full rounded-[var(--radius)] border border-line bg-field px-4 text-sm text-navy-800 outline-none transition-colors focus:border-teal focus:bg-white focus:ring-2 focus:ring-teal/20";
@@ -111,7 +112,7 @@ export default function PacientesPage() {
     setAutError("");
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://localhost:8080/api/v1/especialidades", {
+      const res = await fetch(`${API_URL}/especialidades`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       if (res.ok) setEspecialidades((await res.json()).especialidades ?? []);
@@ -128,7 +129,7 @@ export default function PacientesPage() {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
-        `http://localhost:8080/api/v1/pacientes/${autPaciente.id}/remisiones`,
+        `${API_URL}/pacientes/${autPaciente.id}/remisiones`,
         {
           method: "POST",
           headers: {
@@ -163,7 +164,7 @@ export default function PacientesPage() {
     setError("");
     try {
       const token = localStorage.getItem("token");
-      const url = new URL("http://localhost:8080/api/v1/pacientes");
+      const url = new URL(`${API_URL}/pacientes`);
       if (q) url.searchParams.set("q", q);
 
       const res = await fetch(url.toString(), {
@@ -205,7 +206,7 @@ export default function PacientesPage() {
       if (form.alergias) body.alergias = form.alergias;
       if (form.aseguradora) body.aseguradora = form.aseguradora;
 
-      const res = await fetch("http://localhost:8080/api/v1/pacientes", {
+      const res = await fetch(`${API_URL}/pacientes`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

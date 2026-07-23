@@ -15,6 +15,7 @@ import { Wordmark } from "@/components/brand";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import{API_URL} from "@/config/constants"
 
 type Medico = { id: string; nombre: string; especialidad: string };
 type Autorizacion = { especialidad: string; especialistas: Medico[] };
@@ -92,7 +93,7 @@ export default function PacienteHomePage() {
 
   const loadAgenda = useCallback(async () => {
     const t = token();
-    const res = await fetch("http://localhost:8080/api/v1/mi/agenda", {
+    const res = await fetch(`${API_URL}/mi/agenda`, {
       headers: t ? { Authorization: `Bearer ${t}` } : undefined,
     });
     if (res.ok) setAgenda(await res.json());
@@ -106,7 +107,7 @@ export default function PacienteHomePage() {
     try {
       const t = token();
       const res = await fetch(
-        `http://localhost:8080/api/v1/citas/disponibilidad?medico_id=${medicoId}&fecha=${fechaStr}`,
+        `${API_URL}/citas/disponibilidad?medico_id=${medicoId}&fecha=${fechaStr}`,
         { headers: t ? { Authorization: `Bearer ${t}` } : undefined },
       );
       if (res.ok) {
@@ -135,7 +136,7 @@ export default function PacienteHomePage() {
     }
     (async () => {
       try {
-        const res = await fetch("http://localhost:8080/api/v1/pacientes/me", {
+        const res = await fetch(`${API_URL}/pacientes/me`, {
           headers: { Authorization: `Bearer ${t}` },
         });
         if (res.ok) setPaciente(await res.json());
@@ -175,7 +176,7 @@ export default function PacienteHomePage() {
     setModalError("");
     try {
       const t = token();
-      const res = await fetch("http://localhost:8080/api/v1/citas", {
+      const res = await fetch(`${API_URL}/citas`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

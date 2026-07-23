@@ -59,6 +59,8 @@ services:
       RABBITMQ_RESULT_EXCHANGE: sinapsis.ai
       RABBITMQ_RESULT_ROUTING_KEY: ai.analysis.result
       RABBITMQ_RESULT_QUEUE: backend.ai.results
+      CORS_ALLOWED_ORIGINS: https://supreme-computing-machine-9vq9xj95g9295p9-3000.app.github.dev   # 👈 agrégala aquí
+
     volumes:
       - uploads:/app/uploads
     depends_on:
@@ -95,12 +97,14 @@ services:
   frontend:
     build:
       context: ./frontend
-      # network: host
+      args:
+        NEXT_PUBLIC_API_URL: https://supreme-computing-machine-9vq9xj95g9295p9-8080.app.github.dev/api/v1
     container_name: sinapsis_frontend
     ports:
       - "3000:3000"
     environment:
       NODE_ENV: production
+      CORS_ALLOWED_ORIGINS: https://supreme-computing-machine-9vq9xj95g9295p9-3000.app.github.dev
     depends_on:
       - backend
 

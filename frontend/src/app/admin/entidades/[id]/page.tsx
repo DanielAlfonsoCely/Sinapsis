@@ -6,6 +6,7 @@ import Link from "next/link"
 import { Building2, ChevronLeft, ChevronRight, Pencil, Search, Users, X } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { API_URL } from "@/config/constants"
 
 interface PeriodoHistorico {
   anio: number
@@ -214,7 +215,7 @@ export default function EntidadDetallePage() {
         .split("; ")
         .find((c) => c.startsWith("token="))
         ?.split("=")[1]
-      const res = await fetch(`http://localhost:8080/api/v1/admin/entidades/${id}`, {
+      const res = await fetch(`${API_URL}/admin/entidades/${id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -266,7 +267,7 @@ export default function EntidadDetallePage() {
         .find((c) => c.startsWith("token="))
         ?.split("=")[1]
       const res = await fetch(
-        `http://localhost:8080/api/v1/admin/entidades/${entidadId}/pacientes`,
+        `${API_URL}/admin/entidades/${entidadId}/pacientes`,
         { headers: { Authorization: `Bearer ${token ?? ""}` } }
       )
       if (!res.ok) return
@@ -288,7 +289,7 @@ export default function EntidadDetallePage() {
           .find((c) => c.startsWith("token="))
           ?.split("=")[1]
         const res = await fetch(
-          `http://localhost:8080/api/v1/admin/entidades/${id}`,
+          `${API_URL}/admin/entidades/${id}`,
           { headers: { Authorization: `Bearer ${token ?? ""}` } }
         )
         if (res.status === 403) {

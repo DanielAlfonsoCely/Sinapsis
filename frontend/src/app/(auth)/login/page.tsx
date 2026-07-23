@@ -7,6 +7,7 @@ import { BrandMark } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
+import { API_URL } from "@/config/constants";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -21,7 +22,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:8080/api/v1/auth/login", {
+      
+      const res = await fetch(`${API_URL}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, contrasena: password }),
