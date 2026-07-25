@@ -101,15 +101,15 @@ func TestCategoriaPorExt(t *testing.T) {
 		{".jpg", "imagen"},
 		{".jpeg", "imagen"},
 		{".png", "imagen"},
-		{".dcm", "imagen"}, // DICOM médico
-		{".JPG", "imagen"}, // mayúsculas -> normaliza
-		{".PnG", "imagen"}, // mixto
+		{".dcm", "imagen"},   // DICOM médico
+		{".JPG", "imagen"},   // mayúsculas -> normaliza
+		{".PnG", "imagen"},   // mixto
 		{".pdf", "documento"},
 		{".txt", "documento"},
 		{".docx", "documento"},
-		{"", "documento"},     // archivo sin extensión
-		{".exe", "documento"}, // extensión desconocida
-		{"jpg", "documento"},  // sin el punto -> no matchea el switch
+		{"", "documento"},         // archivo sin extensión
+		{".exe", "documento"},     // extensión desconocida
+		{"jpg", "documento"},      // sin el punto -> no matchea el switch
 	}
 	for _, tc := range casos {
 		if got := categoriaPorExt(tc.ext); got != tc.want {
@@ -181,7 +181,6 @@ func runAuth(header string) (*gin.Context, *httptest.ResponseRecorder) {
 	if header != "" {
 		c.Request.Header.Set("Authorization", header)
 	}
-	c.Request.Header.Set("X-Forwarded-For", "127.0.0.1")
 	middleware.RequireAuth(&config.Config{JWTSecret: "test-secret"})(c)
 	return c, rec
 }
@@ -260,7 +259,7 @@ func TestRequireAuthTokenValido(t *testing.T) {
 // reglas de negocio de este archivo.
 
 func TestAuthLoginValidacion(t *testing.T) {
-	h := NewAuthHandler(nil, &config.Config{JWTSecret: "test-secret"}, nil)
+	h := NewAuthHandler(nil, &config.Config{JWTSecret: "test-secret"})
 
 	t.Run("json inválido -> 400", func(t *testing.T) {
 		c, rec := postJSON(false, "", `{ roto`, nil)
@@ -513,7 +512,7 @@ func TestAnexoServeValidacion(t *testing.T) {
 // quedan para tests de integración.
 
 func TestEntidadCreateValidacion(t *testing.T) {
-	h := NewEntidadHandler(nil, nil)
+	h := NewEntidadHandler(nil)
 
 	t.Run("json inválido -> 400", func(t *testing.T) {
 		c, rec := postJSON(false, "", `{ roto`, nil)

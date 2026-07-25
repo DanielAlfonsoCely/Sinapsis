@@ -11,16 +11,11 @@ import {
   ChevronRight,
   X,
   CheckCircle,
-  BarChart2,
-  Users,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
-//importa api de auditoria para exportar a csv
-import { exportToCSV } from "../registros/api";
-import { API_URL } from "@/config/constants";
 
 // ── Tipos para el listado dinámico ─────────────────────────────────────────
 
@@ -93,7 +88,7 @@ export default function EntidadesPage() {
         .split("; ")
         .find((c) => c.startsWith("token="))
         ?.split("=")[1]
-      const res = await fetch(`${API_URL}/admin/stats`, {
+      const res = await fetch("http://localhost:8080/api/v1/admin/stats", {
         headers: { Authorization: `Bearer ${token ?? ""}` },
       })
       if (!res.ok) return
@@ -105,23 +100,6 @@ export default function EntidadesPage() {
       // silencioso — las cards quedan en 0
     }
   }
-
-  //añade la función para descargar el listado de entidades en CSV
-  const handleExport = () => {
-    const rows = entidades.map((r) => ({    
-      "Nombre de la entidad": r.nombre_entidad,
-      "Tipo de entidad": r.tipo_entidad,
-      "NIT": r.nit,
-      "Ciudad": r.ciudad ?? "",
-      "Estado": r.estado ? "Activa" : "Inactiva",
-      "Fecha de creación": new Date(r.fecha_creacion).toLocaleString("es-CO"),
-    }));
-  
-    const fecha = new Date().toISOString().slice(0, 10);
-    
-    exportToCSV(rows, `entidades_sinapsis_${fecha}.csv`);
-  };
-  
 
   function openModal() {
     setForm(EMPTY_FORM);
@@ -141,7 +119,7 @@ export default function EntidadesPage() {
     setError("");
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_URL}/entidades`, {
+      const res = await fetch("http://localhost:8080/api/v1/entidades", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -180,7 +158,7 @@ export default function EntidadesPage() {
       const params = new URLSearchParams();
       if (q) params.set("q", q);
       const res = await fetch(
-        `${API_URL}/admin/entidades?${params.toString()}`,
+        `http://localhost:8080/api/v1/admin/entidades?${params.toString()}`,
         { headers: { Authorization: `Bearer ${token ?? ""}` } }
       );
       if (res.status === 403) {
@@ -379,30 +357,15 @@ export default function EntidadesPage() {
 
       {/* Buscador */}
       <Card className="p-4">
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="Buscar por NIT, nombre de entidad o ciudad..."
-              className="h-10 w-full rounded border border-line bg-field pl-9 pr-4 text-sm text-slate placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-teal"
-            />
-          </div>
-          <button className="flex items-center gap-2 rounded border border-navy px-4 py-2 text-sm text-navy transition-colors hover:bg-navy hover:text-white"
-            onClick={handleExport}>
-            <BarChart2 className="size-4" />
-            Exportar Reporte
-          </button>
-          <div className="flex items-center gap-2 border-l border-line pl-3">
-            <button className="flex size-9 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field">
-              <BarChart2 className="size-4" />
-            </button>
-            <button className="flex size-9 items-center justify-center rounded border border-line text-slate transition-colors hover:bg-field">
-              <Users className="size-4" />
-            </button>
-          </div>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Buscar por NIT, nombre de entidad o ciudad..."
+            className="h-10 w-full rounded border border-line bg-field pl-9 pr-4 text-sm text-slate placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-teal"
+          />
         </div>
       </Card>
 

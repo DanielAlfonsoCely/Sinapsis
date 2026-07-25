@@ -24,7 +24,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
-import { API_URL } from "@/config/constants";
 
 const textareaClass =
   "w-full resize-none rounded-[var(--radius)] border border-line bg-field px-4 py-3 text-sm text-navy-800 placeholder:text-muted outline-none transition-colors focus:border-teal focus:bg-white focus:ring-2 focus:ring-teal/20";
@@ -125,7 +124,7 @@ function ConsultaForm() {
       try {
         const token = localStorage.getItem("token");
         const res = await fetch(
-          `${API_URL}/pacientes/${pacienteId}`,
+          `http://localhost:8080/api/v1/pacientes/${pacienteId}`,
           { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
         );
         if (res.ok) setPaciente(await res.json());
@@ -210,7 +209,7 @@ function ConsultaForm() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_URL}/consultas`, {
+      const res = await fetch("http://localhost:8080/api/v1/consultas", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -235,7 +234,7 @@ function ConsultaForm() {
         fd.append("archivo", a.file);
         if (a.nombre.trim()) fd.append("nombre", a.nombre.trim());
         const up = await fetch(
-          `${API_URL}/consultas/${consultaId}/anexos`,
+          `http://localhost:8080/api/v1/consultas/${consultaId}/anexos`,
           {
             method: "POST",
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,

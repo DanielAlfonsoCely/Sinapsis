@@ -7,7 +7,6 @@ import { ChevronLeft, Pill, FileText, Ban } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { API_URL } from "@/config/constants";
 
 type Paciente = {
   id: string;
@@ -60,7 +59,7 @@ function Formulas() {
     if (!pacienteId) return;
     const t = token();
     const res = await fetch(
-      `${API_URL}/pacientes/${pacienteId}/formulas`,
+      `http://localhost:8080/api/v1/pacientes/${pacienteId}/formulas`,
       { headers: t ? { Authorization: `Bearer ${t}` } : undefined },
     );
     if (res.ok) setFormulas((await res.json()).formulas ?? []);
@@ -77,7 +76,7 @@ function Formulas() {
         const t = token();
         const headers = t ? { Authorization: `Bearer ${t}` } : undefined;
         const pRes = await fetch(
-          `${API_URL}/pacientes/${pacienteId}`,
+          `http://localhost:8080/api/v1/pacientes/${pacienteId}`,
           { headers },
         );
         if (pRes.ok) setPaciente(await pRes.json());
@@ -91,7 +90,7 @@ function Formulas() {
   async function anular(id: string) {
     const t = token();
     const res = await fetch(
-      `${API_URL}/formulas/${id}/anular`,
+      `http://localhost:8080/api/v1/formulas/${id}/anular`,
       {
         method: "POST",
         headers: t ? { Authorization: `Bearer ${t}` } : undefined,

@@ -13,7 +13,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
-import { API_URL } from "@/config/constants";
 
 type PacienteCita = {
   id: string;
@@ -84,7 +83,7 @@ export default function DashboardPage() {
       try {
         // Citas de hoy: reutilizamos el endpoint de pacientes que ya filtra correctamente
         const [citasRes] = await Promise.all([
-          fetch(`${API_URL}/citas/hoy`, {
+          fetch("http://localhost:8080/api/v1/citas/hoy", {
             headers: { Authorization: `Bearer ${token}` },
           }),
         ]);

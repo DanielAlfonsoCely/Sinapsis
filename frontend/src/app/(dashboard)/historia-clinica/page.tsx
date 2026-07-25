@@ -24,7 +24,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {API_URL} from "@/config/constants";
 
 type Paciente = {
   id: string;
@@ -143,7 +142,7 @@ function HistoriaClinica() {
   async function verAnexo(id: string) {
     const token = localStorage.getItem("token");
     const res = await fetch(
-      `${API_URL}/anexos/${id}/archivo`,
+      `http://localhost:8080/api/v1/anexos/${id}/archivo`,
       { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
     );
     if (!res.ok) return;
@@ -160,7 +159,7 @@ function HistoriaClinica() {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
-        `${API_URL}/pacientes/${pacienteId}/historia-clinica/pdf`,
+        `http://localhost:8080/api/v1/pacientes/${pacienteId}/historia-clinica/pdf`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
       if (res.status === 403) {
@@ -202,15 +201,15 @@ function HistoriaClinica() {
         const token = localStorage.getItem("token");
         const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
         const [pRes, cRes, fRes] = await Promise.all([
-          fetch(`${API_URL}/pacientes/${pacienteId}`, {
+          fetch(`http://localhost:8080/api/v1/pacientes/${pacienteId}`, {
             headers,
           }),
           fetch(
-            `${API_URL}/pacientes/${pacienteId}/consultas`,
+            `http://localhost:8080/api/v1/pacientes/${pacienteId}/consultas`,
             { headers },
           ),
           fetch(
-            `${API_URL}/pacientes/${pacienteId}/formulas`,
+            `http://localhost:8080/api/v1/pacientes/${pacienteId}/formulas`,
             { headers },
           ),
         ]);

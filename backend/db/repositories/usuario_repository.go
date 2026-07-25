@@ -165,7 +165,7 @@ func (r *UsuarioRepository) Update(ctx context.Context, id uuid.UUID, req models
 	}
 
 	setClause := builder.Build(", ")
-	query := `UPDATE usuario SET ` + setClause + ", fecha_actualizacion = NOW() WHERE id = $" + strconv.Itoa(len(builder.Args())+1)
+	query := `UPDATE usuario SET ` + setClause + ", fecha_actualizacion = NOW() WHERE id = $" + strconv.Itoa(len(builder.Args())+1) + " AND estado = true"
 	args := append(builder.Args(), id)
 
 	tag, err := r.pool.Exec(ctx, query, args...)
@@ -203,7 +203,8 @@ func (r *UsuarioRepository) Deactivate(ctx context.Context, id uuid.UUID) error 
 func (r *UsuarioRepository) AssignRole(ctx context.Context, id uuid.UUID, role string) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE usuario SET tipo_usuario = $1, fecha_actualizacion = NOW()
-		 WHERE id = $2 AND estado = true`, role, id,
+		 WHERE id = $2 AND estado = true`,
+		role, id,
 	)
 	if err != nil {
 		return fmt.Errorf("assign role usuario: %w", err)
@@ -282,13 +283,4 @@ func (r *UsuarioRepository) List(ctx context.Context, filters UsuarioFilters) ([
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
-func (r *UsuarioRepository) UsuariosActivos(ctx context.Context) (int, error) {
-	var total int
-	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM usuario WHERE estado = true`).Scan(&total)
-	if err != nil {
-		return 0, fmt.Errorf("count active usuarios: %w", err)
-	}
-	return total, nil
 }

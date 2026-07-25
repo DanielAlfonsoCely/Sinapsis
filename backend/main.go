@@ -17,10 +17,7 @@ import (
 	"sinapsis-backend/db"
 	"sinapsis-backend/queue"
 	"sinapsis-backend/routes"
-
 )
-//import strings
-import "strings"
 
 func main() {
 	loadLocalEnv()
@@ -69,27 +66,22 @@ func main() {
 		log.Println("RABBITMQ_URL no configurada, módulo de IA deshabilitado")
 	}
 
-r := gin.Default()
+	r := gin.Default()
 
-corsOrigins := []string{"http://localhost:3000"}
-if extra := os.Getenv("CORS_ALLOWED_ORIGINS"); extra != "" {
-	corsOrigins = append(corsOrigins, strings.Split(extra, ",")...)
-}
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Disposition"},
+		AllowCredentials: true,
+	}))
 
-r.Use(cors.New(cors.Config{
-	AllowOrigins:     corsOrigins,
-	AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-	AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-	ExposeHeaders:    []string{"Content-Disposition"},
-	AllowCredentials: true,
-}))
+	routes.Setup(r, pool, cfg, publisher)
 
-routes.Setup(r, pool, cfg, publisher)
-
-log.Printf("server starting on :%s", cfg.ServerPort)
-if err := r.Run(":" + cfg.ServerPort); err != nil {
-	log.Fatalf("failed to start server: %v", err)
-}
+	log.Printf("server starting on :%s", cfg.ServerPort)
+	if err := r.Run(":" + cfg.ServerPort); err != nil {
+		log.Fatalf("failed to start server: %v", err)
+	}
 }
 
 func loadLocalEnv() {

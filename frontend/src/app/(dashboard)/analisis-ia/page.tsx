@@ -21,7 +21,6 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { API_URL } from "@/config/constants";
 
 // ---------------------------------------------------------------------------
 // Tipos — espejo de SugerenciaIAResponse del backend
@@ -55,7 +54,7 @@ interface Sugerencia {
 // Helpers
 // ---------------------------------------------------------------------------
 
-
+const API = "http://localhost:8080/api/v1";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -176,7 +175,7 @@ function PreDiagnosticoGate({
     setEnviando(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/consultas/${consultaId}/pre-diagnostico`, {
+      const res = await fetch(`${API}/consultas/${consultaId}/pre-diagnostico`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ pre_diagnostico: texto.trim() }),
@@ -270,7 +269,7 @@ function SolicitarAnalisis() {
     setError(null);
     setConsultaIdSinPreDiagnostico(null);
     try {
-      const res = await fetch(`${API_URL}/examenes/${examinagenId.trim()}/analisis-ia`, {
+      const res = await fetch(`${API}/examenes/${examinagenId.trim()}/analisis-ia`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ analysis_type: analysisType }),
@@ -403,7 +402,7 @@ function AnalisisIAContent() {
 
     const fetchSugerencia = async () => {
       try {
-        const res = await fetch(`${API_URL}/sugerencias-ia/${sugerenciaId}`, {
+        const res = await fetch(`${API}/sugerencias-ia/${sugerenciaId}`, {
           headers: authHeaders(),
         });
         if (cancelado) return;
@@ -441,7 +440,7 @@ function AnalisisIAContent() {
     if (!sugerenciaId || revisando) return;
     setRevisando(true);
     try {
-      const res = await fetch(`${API_URL}/sugerencias-ia/${sugerenciaId}/revision`, {
+      const res = await fetch(`${API}/sugerencias-ia/${sugerenciaId}/revision`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ estado_revision: "revisada" }),
