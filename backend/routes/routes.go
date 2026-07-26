@@ -124,6 +124,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 			admin.DELETE("/usuarios/:id", h.usuario.EliminarUsuario)
 			admin.PATCH("/usuarios/:id/rol", h.usuario.AsignarRol)
 			admin.GET("/auditoria", h.auditoria.List)
+			admin.GET("/auditoria/criticas", h.auditoria.ListCritical)
 			admin.GET("/entidades", h.entidad.ListAdmin)
 			admin.GET("/entidades/:id", h.entidad.GetByIDAdmin)
 			admin.GET("/entidades/:id/pacientes", h.entidad.ListPacientesAdmin)

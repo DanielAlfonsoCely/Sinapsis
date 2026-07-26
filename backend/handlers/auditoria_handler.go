@@ -44,3 +44,30 @@ func (h *AuditoriaHandler) List(c *gin.Context) {
 		"offset":    offset,
 	})
 }
+
+func (h *AuditoriaHandler) ListCritical(c *gin.Context) {
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	if err != nil || limit < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "limit inválido"})
+		return
+	}
+	offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if err != nil || offset < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "offset inválido"})
+		return
+	}
+
+	entries, total, err := h.service.LookCritical(c.Request.Context(), limit, offset)
+	if err != nil {
+		log.Printf("list critical audit error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch alertas críticas"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"registros": entries,
+		"total":     total,
+		"limit":     limit,
+		"offset":    offset,
+	})
+}

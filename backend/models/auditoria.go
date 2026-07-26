@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,53 @@ const (
 	AuditUseAI            AuditOperation = "usar_ia"
 )
 
+type ImportanceLevel string
+
+const (
+	SeverityCritical ImportanceLevel = "CRITICAL"
+	SeverityHigh     ImportanceLevel = "HIGH"
+	SeverityMedium   ImportanceLevel = "MEDIUM"
+	SeverityLow      ImportanceLevel = "LOW"
+)
+
+// TablasSensibles son las tablas cuya modificación eleva la gravedad.
+var tablasSensibles = map[string]bool{
+	"usuario":          true,
+	"medico":           true,
+	"paciente":         true,
+	"historia_clinica": true,
+}
+
+// ClassifyGravedad determina la gravedad automáticamente a partir de la
+// operación y la tabla afectada.
+func ClassifyGravedad(operacion AuditOperation, tabla string) ImportanceLevel {
+	sensible := tablasSensibles[strings.ToLower(tabla)]
+
+	switch operacion {
+	case AuditDelete:
+		if sensible {
+			return SeverityCritical
+		}
+		return SeverityHigh
+	case AuditChangePermission:
+		return SeverityCritical
+	case AuditUpdate:
+		if sensible {
+			return SeverityHigh
+		}
+		return SeverityMedium
+	case AuditCreate:
+		if sensible {
+			return SeverityMedium
+		}
+		return SeverityLow
+	case AuditExport:
+		return SeverityMedium
+	default:
+		return SeverityLow
+	}
+}
+
 type AuditLogEntry struct {
 	ID                uuid.UUID       `json:"id"`
 	UsuarioID         uuid.UUID       `json:"usuario_id"`
@@ -32,4 +80,5 @@ type AuditLogEntry struct {
 	IPOrigen          *string         `json:"ip_origen"`
 	Detalles          *string         `json:"detalles"`
 	FechaOperacion    time.Time       `json:"fecha_operacion"`
+	Gravedad          ImportanceLevel `json:"gravedad"`
 }
