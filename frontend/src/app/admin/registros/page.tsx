@@ -3,12 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   ShieldAlert,
-  FileText,
   Search,
   Filter,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Eye,
   Download,
   RefreshCw,
@@ -28,6 +26,8 @@ type TipoOperacion =
   | "cambiar_permisos"
   | "usar_ia";
 
+type ImportanceLevel = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+
 type RegistroAuditoria = {
   id: string;
   usuario: string;
@@ -38,9 +38,9 @@ type RegistroAuditoria = {
   detalles: string | null;
   ip_origen: string | null;
   fecha_operacion: string;
+  gravedad: ImportanceLevel;
 };
 
-// Forma en que llega del backend
 type AuditLogEntry = {
   id: string;
   usuario_id: string;
@@ -52,6 +52,7 @@ type AuditLogEntry = {
   ip_origen: string | null;
   detalles: string | null;
   fecha_operacion: string;
+  gravedad: ImportanceLevel;
 };
 
 const LIMIT = 50;
@@ -72,6 +73,13 @@ const OPERACION_STYLES: Record<
   usar_ia:          { tone: "info",    label: "Usar IA" },
 };
 
+const SEVERITY_STYLES: Record<ImportanceLevel, { tone: "danger" | "warning" | "info" | "neutral"; label: string }> = {
+  CRITICAL: { tone: "danger",   label: "CRÍTICO" },
+  HIGH:     { tone: "warning",  label: "ALTO" },
+  MEDIUM:   { tone: "info",     label: "MEDIO" },
+  LOW:      { tone: "neutral",  label: "BAJO" },
+};
+
 const TABLAS_LEGIBLES: Record<string, string> = {
   historia_clinica: "Historia Clínica",
   consulta:         "Consulta",
@@ -79,6 +87,7 @@ const TABLAS_LEGIBLES: Record<string, string> = {
   usuario:          "Usuario",
   entidad:          "Entidad",
   cita:             "Cita",
+  medico:           "Médico",
 };
 
 function formatFecha(iso: string) {
@@ -94,16 +103,36 @@ function formatFecha(iso: string) {
 }
 
 function initials(nombre: string) {
-  return nombre
-    .split(" ")
-    .filter((_, i) => i < 2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase();
+  return nombre.split(" ").filter((_, i) => i < 2).map((w) => w[0]).join("").toUpperCase();
 }
 
 function getToken() {
   return document.cookie.split("; ").find((c) => c.startsWith("token="))?.split("=")[1];
+}
+
+// ---------------------------------------------------------------------------
+// Export CSV
+// ---------------------------------------------------------------------------
+function exportCSV(registros: RegistroAuditoria[]) {
+  const headers = ["Fecha y hora", "Usuario", "Email", "Operación", "Tabla", "Gravedad", "ID Registro", "Detalles"];
+  const rows = registros.map((r) => [
+    formatFecha(r.fecha_operacion),
+    r.usuario,
+    r.usuarioEmail,
+    OPERACION_STYLES[r.tipo_operacion]?.label ?? r.tipo_operacion,
+    TABLAS_LEGIBLES[r.tabla_afectada] ?? r.tabla_afectada,
+    SEVERITY_STYLES[r.gravedad]?.label ?? r.gravedad,
+    r.registro_id ?? "",
+    r.detalles ?? "",
+  ]);
+  const csv = [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `bitacora_auditoria_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------------
@@ -115,30 +144,25 @@ export default function RegistrosSistemaPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-
   const [search, setSearch] = useState("");
   const [filtroOp, setFiltroOp] = useState<string>("");
   const [filtroTabla, setFiltroTabla] = useState<string>("");
   const [detalle, setDetalle] = useState<RegistroAuditoria | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  void debounceRef;
 
   const fetchRegistros = useCallback(async (page: number) => {
     setLoading(true);
     setError(null);
     try {
       const token = getToken();
-      const params = new URLSearchParams({
-        limit: String(LIMIT),
-        offset: String((page - 1) * LIMIT),
-      });
+      const params = new URLSearchParams({ limit: String(LIMIT), offset: String((page - 1) * LIMIT) });
       const res = await fetch(`http://localhost:8080/api/v1/admin/auditoria?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 403) { window.location.href = "/login"; return; }
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json() as { registros: AuditLogEntry[]; total: number };
-
-      // Mapear campos del backend al tipo local
       const mapped: RegistroAuditoria[] = (data.registros ?? []).map((e) => ({
         id: e.id,
         usuario: e.usuario_nombre,
@@ -149,8 +173,8 @@ export default function RegistrosSistemaPage() {
         detalles: e.detalles ?? null,
         ip_origen: e.ip_origen ?? null,
         fecha_operacion: e.fecha_operacion,
+        gravedad: e.gravedad ?? "LOW",
       }));
-
       setRegistros(mapped);
       setTotal(data.total ?? 0);
     } catch {
@@ -160,11 +184,8 @@ export default function RegistrosSistemaPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void fetchRegistros(currentPage);
-  }, [currentPage, fetchRegistros]);
+  useEffect(() => { void fetchRegistros(currentPage); }, [currentPage, fetchRegistros]);
 
-  // Filtrado client-side sobre los registros ya cargados
   const filtered = registros.filter((r) => {
     const matchSearch =
       !search ||
@@ -177,18 +198,11 @@ export default function RegistrosSistemaPage() {
     return matchSearch && matchOp && matchTabla;
   });
 
-  // Stats calculadas sobre los registros cargados
-  const statsModHC = registros.filter(
-    (r) => r.tabla_afectada === "historia_clinica" &&
-      (r.tipo_operacion === "crear" || r.tipo_operacion === "actualizar"),
-  ).length;
+  const statsModHC = registros.filter((r) => r.tabla_afectada === "historia_clinica" && ["crear","actualizar"].includes(r.tipo_operacion)).length;
   const statsExport = registros.filter((r) => r.tipo_operacion === "exportar").length;
   const statsPermisos = registros.filter((r) => r.tipo_operacion === "cambiar_permisos").length;
-
   const totalPages = Math.ceil(total / LIMIT);
-
-  const selectClass =
-    "rounded border border-line bg-field px-3 py-2 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal";
+  const selectClass = "rounded border border-line bg-field px-3 py-2 text-sm text-slate focus:outline-none focus:ring-1 focus:ring-teal";
 
   return (
     <div className="flex flex-col gap-6">
@@ -197,54 +211,24 @@ export default function RegistrosSistemaPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
           <Card className="flex w-full max-w-lg flex-col gap-4 p-6">
             <div className="flex items-center justify-between">
-              <h3 className="font-display text-lg font-semibold text-ink">
-                Detalle del registro
-              </h3>
-              <button
-                onClick={() => setDetalle(null)}
-                className="text-muted hover:text-ink"
-              >
-                ✕
-              </button>
+              <h3 className="font-display text-lg font-semibold text-ink">Detalle del registro</h3>
+              <button onClick={() => setDetalle(null)} className="text-muted hover:text-ink">✕</button>
             </div>
-
             <div className="flex flex-col gap-3 rounded border border-line bg-shell p-4 text-sm">
               <Row label="ID Registro" value={detalle.id} mono />
               <Row label="Usuario" value={`${detalle.usuario} (${detalle.usuarioEmail})`} />
-              <Row
-                label="Operación"
-                value={OPERACION_STYLES[detalle.tipo_operacion]?.label ?? detalle.tipo_operacion}
-              />
-              <Row
-                label="Tabla afectada"
-                value={TABLAS_LEGIBLES[detalle.tabla_afectada] ?? detalle.tabla_afectada}
-              />
-              {detalle.registro_id && (
-                <Row label="ID del registro afectado" value={detalle.registro_id} mono />
-              )}
-              {detalle.ip_origen && (
-                <Row label="IP de origen" value={detalle.ip_origen} mono />
-              )}
+              <Row label="Operación" value={OPERACION_STYLES[detalle.tipo_operacion]?.label ?? detalle.tipo_operacion} />
+              <Row label="Tabla afectada" value={TABLAS_LEGIBLES[detalle.tabla_afectada] ?? detalle.tabla_afectada} />
+              <Row label="Gravedad" value={SEVERITY_STYLES[detalle.gravedad]?.label ?? detalle.gravedad} />
+              {detalle.registro_id && <Row label="ID del registro afectado" value={detalle.registro_id} mono />}
               <Row label="Fecha y hora" value={formatFecha(detalle.fecha_operacion)} />
-              {detalle.detalles && (
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.6px] text-muted">
-                    Detalles
-                  </p>
-                  <p className="mt-0.5 text-navy-800">{detalle.detalles}</p>
-                </div>
-              )}
+              {detalle.detalles && <Row label="Detalles" value={detalle.detalles} />}
             </div>
-
             <p className="text-xs text-muted">
               Este registro es inmutable — no puede ser modificado ni eliminado por ningún rol.
             </p>
-
             <div className="flex justify-end">
-              <button
-                onClick={() => setDetalle(null)}
-                className="rounded bg-navy px-4 py-2 text-sm text-white hover:bg-navy-800"
-              >
+              <button onClick={() => setDetalle(null)} className="rounded bg-navy px-4 py-2 text-sm text-white hover:bg-navy-800">
                 Cerrar
               </button>
             </div>
@@ -257,18 +241,17 @@ export default function RegistrosSistemaPage() {
         <div className="flex items-center gap-3">
           <ShieldAlert className="size-5 text-teal" />
           <div>
-            <h2 className="font-display text-2xl font-semibold text-ink">
-              Registros del Sistema
-            </h2>
-            <p className="text-sm text-slate">
-              Bitácora inmutable de auditoría — HU-08
-            </p>
+            <h2 className="font-display text-2xl font-semibold text-ink">Registros del Sistema</h2>
+            <p className="text-sm text-slate">Bitácora inmutable de auditoría — HU-08</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-2 rounded border border-line px-4 py-2.5 text-sm text-slate hover:bg-field">
+          <button
+            onClick={() => exportCSV(filtered)}
+            className="flex items-center gap-2 rounded border border-line px-4 py-2.5 text-sm text-slate hover:bg-field"
+          >
             <Download className="size-4" />
-            Exportar
+            Exportar CSV
           </button>
           <button
             onClick={() => void fetchRegistros(currentPage)}
@@ -280,7 +263,7 @@ export default function RegistrosSistemaPage() {
         </div>
       </div>
 
-      {/* Stats rápidas */}
+      {/* Stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
           { label: "Total registros",     value: total.toString() },
@@ -302,7 +285,6 @@ export default function RegistrosSistemaPage() {
             <Filter className="size-4" />
             <span className="font-medium">Filtrar:</span>
           </div>
-
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
             <input
@@ -313,12 +295,7 @@ export default function RegistrosSistemaPage() {
               className="h-9 w-full rounded border border-line bg-field pl-9 pr-4 text-sm text-slate placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-teal"
             />
           </div>
-
-          <select
-            className={selectClass}
-            value={filtroOp}
-            onChange={(e) => setFiltroOp(e.target.value)}
-          >
+          <select className={selectClass} value={filtroOp} onChange={(e) => setFiltroOp(e.target.value)}>
             <option value="">Todas las operaciones</option>
             <option value="crear">Crear</option>
             <option value="actualizar">Actualizar</option>
@@ -328,12 +305,7 @@ export default function RegistrosSistemaPage() {
             <option value="cambiar_permisos">Cambiar Permisos</option>
             <option value="usar_ia">Usar IA</option>
           </select>
-
-          <select
-            className={selectClass}
-            value={filtroTabla}
-            onChange={(e) => setFiltroTabla(e.target.value)}
-          >
+          <select className={selectClass} value={filtroTabla} onChange={(e) => setFiltroTabla(e.target.value)}>
             <option value="">Todas las tablas</option>
             <option value="historia_clinica">Historia Clínica</option>
             <option value="consulta">Consulta</option>
@@ -345,18 +317,13 @@ export default function RegistrosSistemaPage() {
         </div>
       </Card>
 
-      {/* Banner error */}
       {error && (
-        <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-          {error}
-        </div>
+        <div className="rounded border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div>
       )}
 
       {/* Tabla */}
       <Card className="overflow-hidden">
-        {loading && (
-          <div className="px-6 py-4 text-center text-sm text-muted">Cargando...</div>
-        )}
+        {loading && <div className="px-6 py-4 text-center text-sm text-muted">Cargando...</div>}
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-[#e6f2fa] text-left text-xs uppercase tracking-[0.6px] text-label">
@@ -364,26 +331,22 @@ export default function RegistrosSistemaPage() {
               <th className="px-6 py-4 font-normal">Usuario</th>
               <th className="px-6 py-4 font-normal">Operación</th>
               <th className="px-6 py-4 font-normal">Tabla afectada</th>
-              <th className="px-6 py-4 font-normal">Detalles</th>
-              <th className="px-6 py-4 font-normal">IP origen</th>
+              <th className="px-6 py-4 font-normal">Gravedad</th>
               <th className="px-6 py-4 font-normal text-center">Ver</th>
             </tr>
           </thead>
           <tbody>
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-slate">
-                  No se encontraron registros.
-                </td>
+                <td colSpan={6} className="px-6 py-8 text-center text-slate">No se encontraron registros.</td>
               </tr>
             )}
             {filtered.map((r) => {
-              const op = OPERACION_STYLES[r.tipo_operacion] ?? { tone: "neutral" as const, label: r.tipo_operacion };
+              const op  = OPERACION_STYLES[r.tipo_operacion]  ?? { tone: "neutral" as const, label: r.tipo_operacion };
+              const sev = SEVERITY_STYLES[r.gravedad] ?? { tone: "neutral" as const, label: r.gravedad };
               return (
                 <tr key={r.id} className="border-t border-line hover:bg-shell">
-                  <td className="px-6 py-4 font-mono text-xs text-slate whitespace-nowrap">
-                    {formatFecha(r.fecha_operacion)}
-                  </td>
+                  <td className="px-6 py-4 font-mono text-xs text-slate whitespace-nowrap">{formatFecha(r.fecha_operacion)}</td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
                       <span className="flex size-7 shrink-0 items-center justify-center rounded-xl bg-[#91b9cf]/20 text-[10px] font-medium text-teal">
@@ -395,20 +358,9 @@ export default function RegistrosSistemaPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    <Badge tone={op.tone}>{op.label}</Badge>
-                  </td>
-                  <td className="px-6 py-4 text-slate">
-                    {TABLAS_LEGIBLES[r.tabla_afectada] ?? r.tabla_afectada}
-                  </td>
-                  <td className="px-6 py-4 max-w-xs">
-                    <p className="truncate text-xs text-slate" title={r.detalles ?? ""}>
-                      {r.detalles ?? "—"}
-                    </p>
-                  </td>
-                  <td className="px-6 py-4 font-mono text-xs text-muted">
-                    {r.ip_origen ?? "—"}
-                  </td>
+                  <td className="px-6 py-4"><Badge tone={op.tone}>{op.label}</Badge></td>
+                  <td className="px-6 py-4 text-slate">{TABLAS_LEGIBLES[r.tabla_afectada] ?? r.tabla_afectada}</td>
+                  <td className="px-6 py-4"><Badge tone={sev.tone}>{sev.label}</Badge></td>
                   <td className="px-6 py-4 text-center">
                     <button
                       onClick={() => setDetalle(r)}
@@ -425,9 +377,7 @@ export default function RegistrosSistemaPage() {
 
         <div className="flex items-center justify-between border-t border-line px-6 py-4">
           <p className="text-sm text-muted">
-            {total === 0
-              ? "No hay registros para mostrar"
-              : `Mostrando ${filtered.length} de ${total} registros`}
+            {total === 0 ? "No hay registros para mostrar" : `Mostrando ${filtered.length} de ${total} registros`}
           </p>
           <div className="flex items-center gap-1">
             <button
@@ -441,11 +391,7 @@ export default function RegistrosSistemaPage() {
               <button
                 key={p}
                 onClick={() => setCurrentPage(p)}
-                className={`flex size-8 items-center justify-center rounded border text-sm transition-colors ${
-                  p === currentPage
-                    ? "border-teal bg-teal text-white"
-                    : "border-line text-slate hover:bg-field"
-                }`}
+                className={`flex size-8 items-center justify-center rounded border text-sm transition-colors ${p === currentPage ? "border-teal bg-teal text-white" : "border-line text-slate hover:bg-field"}`}
               >
                 {p}
               </button>
@@ -468,24 +414,11 @@ export default function RegistrosSistemaPage() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Helper de fila para el modal
-// ---------------------------------------------------------------------------
-function Row({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
       <p className="text-[10px] uppercase tracking-[0.6px] text-muted">{label}</p>
-      <p className={`mt-0.5 text-navy-800 ${mono ? "font-mono text-xs" : "text-sm"}`}>
-        {value}
-      </p>
+      <p className={`mt-0.5 text-navy-800 ${mono ? "font-mono text-xs" : "text-sm"}`}>{value}</p>
     </div>
   );
 }
