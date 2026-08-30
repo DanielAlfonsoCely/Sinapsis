@@ -26,6 +26,7 @@ type Handler struct {
 	historiaClinicaPDF *handlers.HistoriaClinicaPDFHandler
 	adminUsuario       *handlers.AdminUsuarioHandler
 	analisisIA         *handlers.AnalisisIAHandler
+	dify *handlers.DifyHandler
 }
 
 func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *queue.Publisher) {
@@ -51,6 +52,8 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 	formulaRepo := repositories.NewFormulaRepository(pool)
 	formulaService := services.NewFormulaService(formulaRepo, auditPublisher)
 
+	difyService := services.NewDifyService(cfg.DifyBaseURL, cfg.DifyAPIKey)
+
 	h := &Handler{
 		auth:               handlers.NewAuthHandler(pool, cfg),
 		usuario:            handlers.NewUsuarioHandler(usuarioService),
@@ -64,6 +67,7 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 		historiaClinicaPDF: handlers.NewHistoriaClinicaPDFHandler(pool),
 		adminUsuario:       handlers.NewAdminUsuarioHandler(pool),
 		analisisIA:         handlers.NewAnalisisIAHandler(pool, publisher),
+		dify: handlers.NewDifyHandler(difyService),
 	}
 
 	r.GET("/health", func(c *gin.Context) {
@@ -155,5 +159,12 @@ func Setup(r *gin.Engine, pool *pgxpool.Pool, cfg *config.Config, publisher *que
 			sugerencias.GET("/:id", middleware.RequireAuth(cfg), h.analisisIA.GetSugerencia)
 			sugerencias.PATCH("/:id/revision", middleware.RequireAuth(cfg), h.analisisIA.Revision)
 		}
+
+		// Chat con asistente IA (Dify) — solo pacientes
+		chat := api.Group("/chat")
+		{
+    		chat.POST("", middleware.RequireAuth(cfg), middleware.RequireRole("paciente"), h.dify.Chat)
+		}
+
 	}
 }

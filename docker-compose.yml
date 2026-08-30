@@ -59,6 +59,10 @@ services:
       RABBITMQ_RESULT_EXCHANGE: sinapsis.ai
       RABBITMQ_RESULT_ROUTING_KEY: ai.analysis.result
       RABBITMQ_RESULT_QUEUE: backend.ai.results
+      # Use host.docker.internal on Mac/Windows with Docker Desktop
+      # If that doesn't resolve, replace with your host machine's IP
+      DIFY_BASE_URL: http://host.docker.internal/v1
+      DIFY_API_KEY: your-dify-api-key-here
     volumes:
       - uploads:/app/uploads
     depends_on:
@@ -91,6 +95,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+
 
   frontend:
     build:

@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import {
   LogOut,
   User,
@@ -10,11 +11,14 @@ import {
   CalendarClock,
   X,
   ShieldCheck,
+  CalendarDays,
+  Bot,
 } from "lucide-react";
-import { Wordmark } from "@/components/brand";
+import { Wordmark, BrandMark } from "@/components/brand";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 type Medico = { id: string; nombre: string; especialidad: string };
 type Autorizacion = { especialidad: string; especialistas: Medico[] };
@@ -40,13 +44,9 @@ type PacienteDetalle = {
 };
 
 function formatDateTime(iso: string) {
-  // El backend devuelve la fecha/hora ya en horario de Colombia (aunque el
-  // timestamp venga marcado como UTC). NO convertimos de zona: leemos la hora
-  // "de pared" tal cual, si no restaríamos 5 horas.
   const m = iso.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
   if (!m) return iso;
   const [y, mo, d, hh, mm] = [m[1], m[2], m[3], m[4], m[5]].map(Number);
-  // Fecha construida con componentes locales (sin conversión de zona).
   return new Date(y, mo - 1, d, hh, mm).toLocaleString("es-CO", {
     day: "2-digit",
     month: "short",
@@ -56,8 +56,6 @@ function formatDateTime(iso: string) {
   });
 }
 
-
-// Fecha de hoy en formato YYYY-MM-DD (para el valor y el mínimo del input date).
 function todayForInput() {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -69,6 +67,85 @@ const estadoTone: Record<string, string> = {
   completada: "border-success/30 bg-success/10 text-success",
   cancelada: "border-line bg-field text-muted",
 };
+
+const NAV = [
+  { href: "/paciente", label: "Mi agenda", icon: CalendarDays },
+  { href: "/paciente/chat", label: "Asistente IA", icon: Bot },
+];
+
+function PacienteSidebar({ nombre }: { nombre: string }) {
+  const pathname = usePathname();
+  const router = useRouter();
+
+  function handleLogout() {
+    localStorage.removeItem("token");
+    localStorage.removeItem("usuario");
+    document.cookie = "token=; path=/; max-age=0";
+    router.push("/login");
+  }
+
+  return (
+    <aside className="fixed inset-y-0 left-0 z-30 flex w-60 flex-col justify-between bg-gradient-to-b from-[#001e4b] to-navy">
+      <div className="flex flex-col gap-6 p-4">
+        {/* Marca */}
+        <div className="flex items-center gap-2.5 px-2 py-4">
+          <BrandMark className="size-7 text-[#76aecc]" />
+          <div className="leading-none">
+            <p className="font-display text-xl font-bold tracking-tight text-white">
+              SINAPSIS
+            </p>
+            <p className="mt-1 text-[10px] uppercase tracking-[1px] text-[#91b9cf]">
+              Portal Paciente
+            </p>
+          </div>
+        </div>
+
+        {/* Avatar paciente */}
+        {nombre && (
+          <div className="flex items-center gap-3 rounded-lg bg-white/5 px-3 py-2">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#91b9cf]/20 text-[#76aecc]">
+              <User className="size-4" />
+            </div>
+            <p className="truncate text-sm font-medium text-white">{nombre}</p>
+          </div>
+        )}
+
+        {/* Navegación */}
+        <nav className="flex flex-col gap-1">
+          {NAV.map(({ href, label, icon: Icon }) => {
+            const active = pathname === href;
+            return (
+              <Link
+                key={href}
+                href={href}
+                className={cn(
+                  "flex items-center gap-3 rounded px-4 py-3 text-sm transition-colors",
+                  active
+                    ? "border-l-4 border-[#76aecc] bg-[#76aecc]/10 pl-5 font-medium text-white"
+                    : "text-[#c3c6d0] hover:bg-white/5 hover:text-white",
+                )}
+              >
+                <Icon className="size-5 shrink-0" />
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* Cerrar sesión */}
+      <div className="border-t border-white/10 p-4">
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center gap-3 rounded px-4 py-3 text-sm text-[#d9534f] transition-colors hover:bg-white/5"
+        >
+          <LogOut className="size-5" />
+          Cerrar Sesión
+        </button>
+      </div>
+    </aside>
+  );
+}
 
 export default function PacienteHomePage() {
   const router = useRouter();
@@ -98,8 +175,6 @@ export default function PacienteHomePage() {
     if (res.ok) setAgenda(await res.json());
   }, []);
 
-  // Carga las franjas horarias del día para el médico seleccionado, indicando
-  // cuáles ya están ocupadas por otro paciente.
   const loadHorarios = useCallback(async (medicoId: string, fechaStr: string) => {
     setLoadingHorarios(true);
     setHorarios([]);
@@ -114,7 +189,7 @@ export default function PacienteHomePage() {
         setHorarios(data.horarios ?? []);
       }
     } catch {
-      // el select queda vacío; cambiar la fecha reintenta la carga
+      // el select queda vacío
     } finally {
       setLoadingHorarios(false);
     }
@@ -122,17 +197,12 @@ export default function PacienteHomePage() {
 
   useEffect(() => {
     if (!target || !fecha) return;
-    (async () => {
-      await loadHorarios(target.id, fecha);
-    })();
+    (async () => { await loadHorarios(target.id, fecha); })();
   }, [target, fecha, loadHorarios]);
 
   useEffect(() => {
     const t = token();
-    if (!t) {
-      router.push("/login");
-      return;
-    }
+    if (!t) { router.push("/login"); return; }
     (async () => {
       try {
         const res = await fetch("http://localhost:8080/api/v1/pacientes/me", {
@@ -149,13 +219,6 @@ export default function PacienteHomePage() {
     })();
   }, [router, loadAgenda]);
 
-  function handleLogout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("usuario");
-    document.cookie = "token=; path=/; max-age=0";
-    router.push("/login");
-  }
-
   function openAgendar(m: Medico) {
     setTarget(m);
     setFecha(todayForInput());
@@ -167,10 +230,7 @@ export default function PacienteHomePage() {
   async function submitAgendar(e: React.FormEvent) {
     e.preventDefault();
     if (!target) return;
-    if (!fecha || !hora) {
-      setModalError("Selecciona fecha y hora de la cita.");
-      return;
-    }
+    if (!fecha || !hora) { setModalError("Selecciona fecha y hora de la cita."); return; }
     setSaving(true);
     setModalError("");
     try {
@@ -190,12 +250,7 @@ export default function PacienteHomePage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setModalError(data.error ?? "No se pudo agendar la cita");
-        if (res.status === 409) {
-          // El horario pudo haber sido tomado por otro paciente justo ahora:
-          // refrescamos la lista para que ya no aparezca disponible.
-          setHora("");
-          loadHorarios(target.id, fecha);
-        }
+        if (res.status === 409) { setHora(""); loadHorarios(target.id, fecha); }
         return;
       }
       setTarget(null);
@@ -207,165 +262,141 @@ export default function PacienteHomePage() {
     }
   }
 
+  const nombrePaciente = paciente
+    ? `${paciente.nombre_paciente} ${paciente.apellidos_paciente}`
+    : "";
+
   return (
-    <div className="flex min-h-full flex-col items-center bg-canvas px-4 py-10">
-      <div className="flex w-full max-w-lg flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <Wordmark />
-          <Button variant="outline" size="sm" onClick={handleLogout}>
-            <LogOut className="size-4" />
-            Cerrar Sesión
-          </Button>
-        </div>
+    <div className="flex min-h-screen">
+      <PacienteSidebar nombre={nombrePaciente} />
 
-        {loading && (
-          <Card className="p-8 text-center text-sm text-slate">Cargando…</Card>
-        )}
-        {error && (
-          <Card className="p-6 text-center text-sm text-danger">{error}</Card>
-        )}
+      {/* Contenido principal — margen izquierdo igual al ancho de la sidebar */}
+      <main className="ml-60 flex flex-1 flex-col items-center bg-canvas px-4 py-10">
+        <div className="flex w-full max-w-lg flex-col gap-6">
 
-        {paciente && (
-          <Card className="flex items-center gap-4 p-6">
-            <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-[#91b9cf]/20 text-teal">
-              <User className="size-7" />
-            </div>
-            <div>
-              <h1 className="font-display text-lg font-semibold text-ink">
-                {paciente.nombre_paciente} {paciente.apellidos_paciente}
-              </h1>
-              <p className="font-mono text-sm text-muted">
-                {paciente.tipo_documento} {paciente.numero_documento}
-              </p>
-            </div>
-          </Card>
-        )}
+          {loading && (
+            <Card className="p-8 text-center text-sm text-slate">Cargando…</Card>
+          )}
+          {error && (
+            <Card className="p-6 text-center text-sm text-danger">{error}</Card>
+          )}
 
-        {/* Médico general */}
-        {agenda?.medico_tratante && (
-          <Card className="flex flex-col gap-3 p-6">
-            <h2 className="font-display font-semibold text-ink">
-              Mi Médico general
-            </h2>
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="flex size-10 items-center justify-center rounded-lg bg-teal/10 text-teal">
-                  <Stethoscope className="size-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-ink">
-                    {agenda.medico_tratante.nombre}
-                  </p>
-                  <p className="text-xs text-muted">
-                    {agenda.medico_tratante.especialidad}
-                  </p>
-                </div>
+          {paciente && (
+            <Card className="flex items-center gap-4 p-6">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-[#91b9cf]/20 text-teal">
+                <User className="size-7" />
               </div>
-              <Button size="sm" onClick={() => openAgendar(agenda.medico_tratante!)}>
-                <CalendarPlus className="size-4" />
-                Agendar cita
-              </Button>
-            </div>
-          </Card>
-        )}
-
-        {/* Especialistas autorizados */}
-        {agenda && agenda.autorizaciones.length > 0 && (
-          <Card className="flex flex-col gap-3 p-6">
-            <h2 className="flex items-center gap-2 font-display font-semibold text-ink">
-              <ShieldCheck className="size-4 text-teal" />
-              Especialistas autorizados
-            </h2>
-            <p className="text-xs text-muted">
-              Tu médico general autorizó estas especialidades. Agenda cuando
-              quieras.
-            </p>
-            {agenda.autorizaciones.map((a) => (
-              <div key={a.especialidad} className="flex flex-col gap-2">
-                <p className="text-xs uppercase tracking-[0.6px] text-label">
-                  {a.especialidad}
+              <div>
+                <h1 className="font-display text-lg font-semibold text-ink">
+                  {paciente.nombre_paciente} {paciente.apellidos_paciente}
+                </h1>
+                <p className="font-mono text-sm text-muted">
+                  {paciente.tipo_documento} {paciente.numero_documento}
                 </p>
-                {a.especialistas.map((m) => (
-                  <div
-                    key={m.id}
-                    className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-line bg-shell px-3 py-2"
-                  >
-                    <span className="text-sm text-navy-800">{m.nombre}</span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => openAgendar(m)}
-                    >
-                      <CalendarPlus className="size-4" />
-                      Agendar
-                    </Button>
-                  </div>
-                ))}
               </div>
-            ))}
-          </Card>
-        )}
+            </Card>
+          )}
 
-        {/* Mis citas */}
-        {agenda && (
-          <Card className="flex flex-col gap-3 p-6">
-            <h2 className="flex items-center gap-2 font-display font-semibold text-ink">
-              <CalendarClock className="size-4 text-teal" />
-              Mis citas
-            </h2>
-            {agenda.citas.length === 0 ? (
-              <p className="text-sm text-slate">Aún no tienes citas agendadas.</p>
-            ) : (
-              agenda.citas.map((c) => (
-                <div
-                  key={c.id}
-                  className="flex items-center justify-between gap-3 border-t border-line pt-3 first:border-0 first:pt-0"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-ink">
-                      {c.medico_nombre}{" "}
-                      <span className="text-xs font-normal text-muted">
-                        · {c.especialidad}
-                      </span>
-                    </p>
-                    <p className="text-xs text-muted">
-                      {formatDateTime(c.fecha_hora)}
-                      {c.motivo ? ` · ${c.motivo}` : ""}
-                    </p>
+          {/* Médico general */}
+          {agenda?.medico_tratante && (
+            <Card className="flex flex-col gap-3 p-6">
+              <h2 className="font-display font-semibold text-ink">Mi Médico general</h2>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 items-center justify-center rounded-lg bg-teal/10 text-teal">
+                    <Stethoscope className="size-5" />
                   </div>
-                  <span
-                    className={`rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${
-                      estadoTone[c.estado] ?? estadoTone.cancelada
-                    }`}
-                  >
-                    {c.estado}
-                  </span>
+                  <div>
+                    <p className="text-sm font-medium text-ink">{agenda.medico_tratante.nombre}</p>
+                    <p className="text-xs text-muted">{agenda.medico_tratante.especialidad}</p>
+                  </div>
                 </div>
-              ))
-            )}
-          </Card>
-        )}
-      </div>
+                <Button size="sm" onClick={() => openAgendar(agenda.medico_tratante!)}>
+                  <CalendarPlus className="size-4" />
+                  Agendar cita
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          {/* Especialistas autorizados */}
+          {agenda && agenda.autorizaciones.length > 0 && (
+            <Card className="flex flex-col gap-3 p-6">
+              <h2 className="flex items-center gap-2 font-display font-semibold text-ink">
+                <ShieldCheck className="size-4 text-teal" />
+                Especialistas autorizados
+              </h2>
+              <p className="text-xs text-muted">
+                Tu médico general autorizó estas especialidades. Agenda cuando quieras.
+              </p>
+              {agenda.autorizaciones.map((a) => (
+                <div key={a.especialidad} className="flex flex-col gap-2">
+                  <p className="text-xs uppercase tracking-[0.6px] text-label">{a.especialidad}</p>
+                  {a.especialistas.map((m) => (
+                    <div
+                      key={m.id}
+                      className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-line bg-shell px-3 py-2"
+                    >
+                      <span className="text-sm text-navy-800">{m.nombre}</span>
+                      <Button size="sm" variant="outline" onClick={() => openAgendar(m)}>
+                        <CalendarPlus className="size-4" />
+                        Agendar
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </Card>
+          )}
+
+          {/* Mis citas */}
+          {agenda && (
+            <Card className="flex flex-col gap-3 p-6">
+              <h2 className="flex items-center gap-2 font-display font-semibold text-ink">
+                <CalendarClock className="size-4 text-teal" />
+                Mis citas
+              </h2>
+              {agenda.citas.length === 0 ? (
+                <p className="text-sm text-slate">Aún no tienes citas agendadas.</p>
+              ) : (
+                agenda.citas.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between gap-3 border-t border-line pt-3 first:border-0 first:pt-0"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-ink">
+                        {c.medico_nombre}{" "}
+                        <span className="text-xs font-normal text-muted">· {c.especialidad}</span>
+                      </p>
+                      <p className="text-xs text-muted">
+                        {formatDateTime(c.fecha_hora)}
+                        {c.motivo ? ` · ${c.motivo}` : ""}
+                      </p>
+                    </div>
+                    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${estadoTone[c.estado] ?? estadoTone.cancelada}`}>
+                      {c.estado}
+                    </span>
+                  </div>
+                ))
+              )}
+            </Card>
+          )}
+        </div>
+      </main>
 
       {/* Modal agendar */}
       {target && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
           <Card className="flex w-full max-w-sm flex-col gap-4 p-6">
             <div className="flex items-center justify-between">
-              <h3 className="font-display text-lg font-semibold text-ink">
-                Agendar cita
-              </h3>
-              <button
-                type="button"
-                onClick={() => setTarget(null)}
-                className="text-muted hover:text-ink"
-              >
+              <h3 className="font-display text-lg font-semibold text-ink">Agendar cita</h3>
+              <button type="button" onClick={() => setTarget(null)} className="text-muted hover:text-ink">
                 <X className="size-4" />
               </button>
             </div>
             <p className="text-sm text-slate">
-              Con <span className="font-medium text-ink">{target.nombre}</span> ·{" "}
-              {target.especialidad}
+              Con <span className="font-medium text-ink">{target.nombre}</span> · {target.especialidad}
             </p>
             <form onSubmit={submitAgendar} className="flex flex-col gap-4">
               <Field label="Fecha">
@@ -374,10 +405,7 @@ export default function PacienteHomePage() {
                   required
                   min={todayForInput()}
                   value={fecha}
-                  onChange={(e) => {
-                    setFecha(e.target.value);
-                    setHora("");
-                  }}
+                  onChange={(e) => { setFecha(e.target.value); setHora(""); }}
                 />
               </Field>
               <Field label="Hora" hint={<span className="text-xs text-muted">6:00 a 19:30</span>}>
@@ -395,13 +423,9 @@ export default function PacienteHomePage() {
                         ? "Selecciona una hora…"
                         : "No hay horarios disponibles este día"}
                   </option>
-                  {horarios
-                    .filter((h) => h.disponible)
-                    .map((h) => (
-                      <option key={h.hora} value={h.hora}>
-                        {h.hora}
-                      </option>
-                    ))}
+                  {horarios.filter((h) => h.disponible).map((h) => (
+                    <option key={h.hora} value={h.hora}>{h.hora}</option>
+                  ))}
                 </select>
               </Field>
               <Field label="Motivo (opcional)">
@@ -411,20 +435,10 @@ export default function PacienteHomePage() {
                   placeholder="Motivo de la consulta…"
                 />
               </Field>
-              {modalError && (
-                <p className="text-sm text-danger">{modalError}</p>
-              )}
+              {modalError && <p className="text-sm text-danger">{modalError}</p>}
               <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setTarget(null)}
-                >
-                  Cancelar
-                </Button>
-                <Button type="submit" disabled={saving}>
-                  {saving ? "Agendando…" : "Agendar cita"}
-                </Button>
+                <Button type="button" variant="outline" onClick={() => setTarget(null)}>Cancelar</Button>
+                <Button type="submit" disabled={saving}>{saving ? "Agendando…" : "Agendar cita"}</Button>
               </div>
             </form>
           </Card>

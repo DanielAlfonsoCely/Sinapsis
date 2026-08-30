@@ -18,6 +18,9 @@ type Config struct {
 	RabbitMQResultExchange  string
 	RabbitMQResultRoutingKey string
 	RabbitMQResultQueue     string
+	// Dify — integración con el chatbot RAG
+	DifyBaseURL string
+	DifyAPIKey  string
 }
 
 func Load() *Config {
@@ -36,6 +39,8 @@ func Load() *Config {
 		RabbitMQResultExchange:   getEnv("RABBITMQ_RESULT_EXCHANGE", "sinapsis.ai"),
 		RabbitMQResultRoutingKey: getEnv("RABBITMQ_RESULT_ROUTING_KEY", "ai.analysis.result"),
 		RabbitMQResultQueue:      getEnv("RABBITMQ_RESULT_QUEUE", "backend.ai.results"),
+		DifyBaseURL: getEnv("DIFY_BASE_URL", "http://host.docker.internal/v1"),
+		DifyAPIKey:  getEnv("DIFY_API_KEY", ""),
 	}
 }
 
